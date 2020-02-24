@@ -1,0 +1,124 @@
+name:                pacchettibotti
+version:             0.1.0
+github:              "spacchetti/pacchettibotti"
+license:             AGPL-3
+author:              "Fabrizio Ferrai"
+maintainer:          "@fabferrai"
+copyright:           "2020 Fabrizio Ferrai"
+
+extra-source-files:
+- README.md
+- CHANGELOG.md
+
+ghc-options:
+  - -Wall
+  - -Wcompat
+  - -Widentities
+  - -Wincomplete-record-updates
+  - -Wincomplete-uni-patterns
+  - -Wpartial-fields
+  - -Wredundant-constraints
+
+description:         Please see the README on GitHub at <https://github.com/spacchetti/pacchettibotti>
+
+default-extensions:
+- AutoDeriveTypeable
+- BangPatterns
+- BinaryLiterals
+- ConstraintKinds
+- DataKinds
+- DefaultSignatures
+- DeriveDataTypeable
+- DeriveFoldable
+- DeriveFunctor
+- DeriveGeneric
+- DeriveTraversable
+- DoAndIfThenElse
+- EmptyDataDecls
+- ExistentialQuantification
+- FlexibleContexts
+- FlexibleInstances
+- FunctionalDependencies
+- GADTs
+- GeneralizedNewtypeDeriving
+- InstanceSigs
+- KindSignatures
+- LambdaCase
+- MonadFailDesugaring
+- MultiParamTypeClasses
+- MultiWayIf
+- NamedFieldPuns
+- NoImplicitPrelude
+- OverloadedStrings
+- PartialTypeSignatures
+- PatternGuards
+- PolyKinds
+- RankNTypes
+- RecordWildCards
+- ScopedTypeVariables
+- StandaloneDeriving
+- TupleSections
+- TypeFamilies
+- TypeSynonymInstances
+- ViewPatterns
+
+library:
+  source-dirs: src
+  dependencies:
+  - aeson-pretty
+  - async-pool
+  - base >= 4.7 && < 5
+  - bytestring
+  - containers
+  - dhall
+  - filepath
+  - github
+  - aeson
+  - http-client
+  - http-conduit
+  - lens-family-core
+  - megaparsec
+  - process
+  - retry
+  - spago
+  - stm
+  - temporary
+  - text < 1.3
+  - time
+  - turtle
+  - vector
+
+executables:
+  pacchettibotti:
+    main:                PacchettiBotti.hs
+    source-dirs:         app
+    other-modules:       []
+    ghc-options:
+    - -main-is PacchettiBotti
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - aeson-pretty
+    - async-pool
+    - base >= 4.7 && < 5
+    - bytestring
+    - containers
+    - dhall
+    - filepath
+    - github
+    - aeson
+    - http-client
+    - http-conduit
+    - lens-family-core
+    - megaparsec
+    - pacchettibotti
+    - process
+    - retry
+    - spago
+    - stm
+    - temporary
+    - text < 1.3
+    - time
+    - turtle
+    - vector

@@ -1,0 +1,4 @@
+.envrc
+.stack-work
+*.log
+*.cabal
