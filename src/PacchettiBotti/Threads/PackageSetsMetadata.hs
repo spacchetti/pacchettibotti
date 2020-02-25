@@ -3,7 +3,6 @@ module PacchettiBotti.Threads.PackageSetsMetadata where
 import           PacchettiBotti.Prelude
 
 import qualified Control.Retry                 as Retry
-import qualified Control.Concurrent.STM.TChan  as Chan
 import qualified Data.Map.Strict               as Map
 import qualified Data.Text                     as Text
 import qualified Spago.Dhall                   as Dhall
@@ -13,13 +12,11 @@ import qualified Data.ByteString.Lazy          as BSL
 import qualified GHC.IO
 
 import           Spago.Types
-import           Spago.GlobalCache              ( RepoMetadataV1(..) )
+import           Spago.GlobalCache              ( RepoMetadataV1(..), ReposMetadataV1 )
 import           Data.Aeson.Encode.Pretty       ( encodePretty )
 
 import qualified PacchettiBotti.GitHub         as GitHub
 import qualified PacchettiBotti.Run            as Run
-
-import           PacchettiBotti.Threads
 
 
 metadataRepo :: GitHub.Address
@@ -28,11 +25,11 @@ metadataRepo = GitHub.Address "spacchetti" "package-sets-metadata"
 -- | Take the latest package set from package-sets master, get a list of all the
 --   packages in there, and thenn query their commits and tags. Once done, send
 --   the package on the bus.
-fetcher :: HasGitHub env => Message -> RIO env ()
-fetcher RefreshState = do
+fetcher :: HasEnv env => RIO env ()
+fetcher = do
   logInfo "Downloading and parsing package set.."
   packageSet <- fetchPackageSet
-  atomically $ Chan.writeTChan bus $ NewPackageSet packageSet
+  writeBus $ NewPackageSet packageSet
   let packages = Map.toList packageSet
   logInfo $ "Fetching metadata for " <> display (length packages) <> " packages"
 
@@ -42,7 +39,7 @@ fetcher RefreshState = do
     for asyncs wait'
 
   logInfo "Fetched all metadata."
-  atomically $ Chan.writeTChan bus $ NewMetadata $ foldMap (uncurry Map.singleton) metadata
+  writeBus $ NewMetadata $ foldMap (uncurry Map.singleton) metadata
 
   where
     fetchRepoMetadata :: HasGitHub env => (PackageName, Package) -> RIO env (PackageName, RepoMetadataV1)
@@ -77,12 +74,11 @@ fetcher RefreshState = do
         Dhall.RecordLit pkgs -> Map.mapKeys PackageName . Dhall.Map.toMap
           <$> traverse Spago.Config.parsePackage pkgs
         something -> throwM $ Dhall.PackagesIsNotRecord something
-fetcher _ = pure ()
 
 
 -- | Whenever there's a new metadata set, push it to the repo
-updater :: HasLogFunc env => Message -> RIO env ()
-updater (NewMetadata metadata) = do
+updater :: HasLogFunc env => ReposMetadataV1 -> RIO env ()
+updater metadata = do
   -- Write the metadata to file
   let writeMetadata :: HasLogFunc env => GHC.IO.FilePath -> RIO env ()
       writeMetadata tempfolder = do
@@ -97,4 +93,3 @@ updater (NewMetadata metadata) = do
     [ "mv -f metadataV1new.json metadataV1.json"
     , "git add metadataV1.json"
     ]
-updater _ = pure ()

@@ -8,6 +8,7 @@ import qualified Data.Text                     as Text
 import qualified Data.Text.Encoding            as Encoding
 import qualified GHC.IO.Encoding
 import qualified System.Environment            as Env
+import qualified Data.Map as Map
 
 import qualified PacchettiBotti.DB             as DB
 import qualified PacchettiBotti.GitHub         as GitHub
@@ -17,8 +18,6 @@ import qualified PacchettiBotti.Threads.PackageSets
                                                as PackageSets
 import qualified PacchettiBotti.Threads.PackageSetsMetadata
                                                as Metadata
-
-import           PacchettiBotti.Threads
 
 
 main :: IO ()
@@ -45,53 +44,79 @@ main = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle -> do
     logInfo "Creating 'data' folder"
     mktree "data"
 
+    state <- liftIO $ Concurrent.newMVar emptyState
+    bus <- liftIO Chan.newBroadcastTChanIO
+
     let env =
           let
             envLogFun = logFunc
             envGithubToken = token
-            envDbHandle = DB.Handle -- TODO
+            envBus = bus
+            envState = state
+            envDB = DB.Handle -- TODO
           in Env{..}
 
-    let spawnThread :: HasLogFunc env => Text -> (Message -> RIO Env ()) -> RIO env ()
-        spawnThread name thread = do
-          let threadLoop :: IO ()
-              threadLoop = do
-                pullChan <- atomically $ Chan.dupTChan bus
-                forever $ atomically (Chan.readTChan pullChan) >>= (runRIO env . thread)
-          logInfo $ "Spawning thread " <> displayShow name
-          void $ liftIO $ Concurrent.forkIO $ catch threadLoop $ \(err :: SomeException) -> runRIO env $ do
-            logError $ "Thread " <> displayShow name <> " broke, restarting.."
-            logError $ "Error was: " <> display err
-            spawnThread name thread
+    runRIO env $ do
+      -- To kickstart updates we just need to send a "heartbeat" on the bus once an hour
+      -- Threads will be listening to this, do stuff, post things on the bus which we handle
+      -- here in the main thread
+      spawnThread "Heartbeat" heartbeat
 
-    -- Start spawning threads
-    --   General utility
-    spawnThread "writer"                  Common.persistState
-    --   purescript repo
-    spawnThread "releaseCheckPureScript"  $ Common.checkLatestRelease Spago.purescriptRepo
-    --   purescript-docs-search repo
-    spawnThread "releaseCheckDocsSearch"  $ Common.checkLatestRelease Spago.docsSearchRepo
-    --   spago repo
-    spawnThread "spagoUpdatePackageSets"  Spago.updatePackageSets
-    spawnThread "spagoUpdateDocsSearch"   Spago.updateDocsSearch
-    --     TODO: update purescript-metadata repo on purs release
-    spawnThread "spagoUpdatePurescript"   Spago.updatePurescriptVersion
-    --   package-sets-metadata repo
-    spawnThread "metadataFetcher"         Metadata.fetcher
-    spawnThread "metadataUpdater"         Metadata.updater
-    -- package-sets repo
-    spawnThread "releaseCheckPackageSets" $ Common.checkLatestRelease PackageSets.packageSetsRepo
-    spawnThread "packageSetsUpdater"      PackageSets.updater
-    spawnThread "packageSetsCommenter"    PackageSets.commenter
+      pullChan <- atomically $ Chan.dupTChan bus
+      forever $ atomically (Chan.readTChan pullChan) >>= handleMessage
 
-    -- To kickstart the whole thing we just need to send a "heartbeat" on the bus once an hour
-    -- Threads will be listening to this and act accordingly
-    forever $ do
-      logInfo "Refreshing state.."
-      liftIO $ atomically $ Chan.writeTChan bus RefreshState
-      sleep _60m
 
+handleMessage :: HasEnv env => Message -> RIO env ()
+handleMessage = \case
+  RefreshState -> do
+    spawnThread "releaseCheckPureScript"
+      $ Common.checkLatestRelease Spago.purescriptRepo
+    spawnThread "releaseCheckDocsSearch"
+      $ Common.checkLatestRelease Spago.docsSearchRepo
+    spawnThread "releaseCheckPackageSets"
+      $ Common.checkLatestRelease PackageSets.packageSetsRepo
+    spawnThread "metadataFetcher" Metadata.fetcher
+  NewRepoRelease address release -> do
+    updateState
+      $ \State{..} -> let newReleases = Map.insert address release latestReleases
+                      in pure State{ latestReleases = newReleases , ..}
+    case address of
+      a | a == PackageSets.packageSetsRepo -> spawnThread "spagoUpdatePackageSets"
+          $ Spago.updatePackageSets release
+      a | a == Spago.purescriptRepo -> spawnThread "spagoUpdatePurescript"
+          $ Spago.updatePurescriptVersion release
+        --     TODO: update purescript-metadata repo on purs release
+      a | a == Spago.docsSearchRepo -> spawnThread "spagoUpdateDocsSearch"
+          $ Spago.updateDocsSearch release
+      _ -> logWarn $ "Got unexpected release update: " <> displayShow address
+  NewVerification result ->
+    spawnThread "packageSetsCommenter" $ PackageSets.commenter result
+  NewMetadata newMetadata -> do
+    updateState
+      $ \State{..} -> pure State{ metadata = newMetadata, ..}
+    spawnThread "packageSetsUpdater" $ PackageSets.updater newMetadata
+    spawnThread "metadataUpdater" $ Metadata.updater newMetadata
+  NewPackageSet newPackageSet ->
+    updateState
+      $ \State{..} -> pure State{ packageSet = newPackageSet, ..}
+
+
+spawnThread :: HasEnv env => Text -> RIO Env () -> RIO env ()
+spawnThread name thread = do
+  env <- view envL
+  logInfo $ "Spawning thread " <> displayShow name
+  void
+    $ liftIO $ Concurrent.forkIO
+    $ catch (runRIO env thread)
+    $ \(err :: SomeException) -> runRIO env $ do
+      logError $ "Thread " <> displayShow name <> " broke, error was:"
+      logError $ display err
+
+heartbeat :: (HasLogFunc env, HasBus env) => RIO env ()
+heartbeat = forever $ do
+  logInfo "Refreshing state.."
+  writeBus RefreshState
+  sleep _60m
   where
     _60m = 60 * 60 * 1000000
-
     sleep = liftIO . Concurrent.threadDelay

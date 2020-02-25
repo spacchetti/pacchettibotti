@@ -4,7 +4,6 @@ import           PacchettiBotti.Prelude
 
 import qualified Data.Text                     as Text
 import qualified Control.Concurrent            as Concurrent
-import qualified Control.Concurrent.STM.TChan  as Chan
 import qualified Data.Map.Merge.Strict         as Map
 import qualified Data.Map.Strict               as Map
 import qualified Data.Set                      as Set
@@ -15,14 +14,12 @@ import qualified Spago.Dhall                   as Dhall
 import qualified Dhall.Map
 
 import           Spago.Types
-import           Spago.GlobalCache              ( RepoMetadataV1(..)
+import           Spago.GlobalCache              ( RepoMetadataV1(..), ReposMetadataV1
                                                 , Tag(..)
                                                 )
 
 import qualified PacchettiBotti.GitHub         as GitHub
 import qualified PacchettiBotti.Run            as Run
-
-import           PacchettiBotti.Threads
 
 
 type Expr = Dhall.DhallExpr Dhall.Import
@@ -32,15 +29,15 @@ packageSetsRepo = GitHub.Address "purescript" "package-sets"
 
 -- | Watch out for the result of a `spago verify-set` command, and comment appropriately
 --   on the PR thread (if any)
-commenter :: HasGitHub env => Message -> RIO env ()
-commenter (NewVerification result) = do
+commenter :: HasEnv env => VerificationResult -> RIO env ()
+commenter result = do
   maybePR <- GitHub.getPullRequestForUser "spacchettibotti" packageSetsRepo
 
   case maybePR of
     Nothing -> do
       logWarn "Could not find an open PR, waiting 5 mins.."
       liftIO $ Concurrent.threadDelay (5 * 60 * 1000000)
-      atomically $ Chan.writeTChan bus $ NewVerification result
+      writeBus $ NewVerification result
     Just GitHub.PullRequest{..} -> do
       let commentBody = case result of
             (ExitSuccess, _, _) -> "Result of `spago verify-set` in a clean project: **success** 🎉"
@@ -64,7 +61,6 @@ commenter (NewVerification result) = do
               , "</p></details>"
               ]
       GitHub.commentOnPR packageSetsRepo pullRequestNumber commentBody
-commenter _ = pure ()
 
 
 data BotCommand
@@ -79,8 +75,8 @@ data BotCommand
 --   then opening a PR with the result of `spago verify-set`.
 --   Once in there, it will parse the comments on the PR to find out which
 --   packages we want to temporarily ban from the verification/upgrade process
-updater :: HasGitHub env => Message -> RIO env ()
-updater (NewMetadata newMetadata) = do
+updater :: HasEnv env => ReposMetadataV1 -> RIO env ()
+updater newMetadata = do
   -- This metadata is the most up-to-date snapshot of all the repos in package-sets
   -- master branch. Among other things it contains the latest releases of all the
   -- packages in there.
@@ -107,14 +103,14 @@ updater (NewMetadata newMetadata) = do
                 (_, True) -> Just (Tag version, owner)
                 (_, _)    -> Just (latest, owner)
 
-  State{..} <- liftIO $ Concurrent.readMVar state
+  State{..} <- readState
   let removeBannedOverrides packageName (Tag tag, _) = case Map.lookup packageName packageSet of
         Just Package{ location = Remote {version}} | tag == version -> False
         _ -> True
   let newVersionsWithBanned = computePackagesToUpdate newMetadata packageSet banned
   let newVersions = Map.filterWithKey removeBannedOverrides newVersionsWithBanned
 
-  let patchVersions :: HasLogFunc env => GHC.IO.FilePath -> RIO env ()
+  let patchVersions :: (HasLogFunc env, HasBus env) => GHC.IO.FilePath -> RIO env ()
       patchVersions path = do
         for_ (Map.toList newVersionsWithBanned) $ \(packageName, (tag, owner)) -> do
           logInfo $ "Patching version for " <> displayShow packageName
@@ -124,7 +120,7 @@ updater (NewMetadata newMetadata) = do
         logInfo "Verifying new set. This might take a LONG while.."
         result <- Run.runWithCwd path "cd src; spago init; spago verify-set"
         logInfo "Verified packages, spamming the channel with the result.."
-        atomically $ Chan.writeTChan bus $ NewVerification result
+        writeBus $ NewVerification result
 
   let commands =
         [ "make"
@@ -227,4 +223,3 @@ updater (NewMetadata newMetadata) = do
             newPackage = Dhall.RecordLit $ Dhall.Map.insert "version" newPackageVersion pkgKVs
           in pure $ Dhall.RecordLit $ Dhall.Map.insert packageName newPackage kvs
     updateVersion _ _ other = pure other
-updater _ = pure ()

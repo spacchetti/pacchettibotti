@@ -23,7 +23,6 @@ import Spago.Prelude hiding (Env)
 
 import qualified Data.Vector                   as Vector
 import qualified Data.Map                      as Map
-import qualified Data.Text                     as Text
 import qualified GitHub
 
 import           Spago.GlobalCache              ( CommitHash(..)
@@ -31,15 +30,6 @@ import           Spago.GlobalCache              ( CommitHash(..)
                                                 )
 import PacchettiBotti.Env
 
-
-data Address = Address
-  { owner :: GitHub.Name GitHub.Owner
-  , repo  :: GitHub.Name GitHub.Repo
-  } deriving (Eq, Ord)
-
-instance Show Address where
-  show (Address owner repo) = Text.unpack
-    $ "\"" <> GitHub.untagName owner <> "/" <> GitHub.untagName repo <> "\""
 
 data SimplePR = SimplePR
   { prBranchName :: !Text
