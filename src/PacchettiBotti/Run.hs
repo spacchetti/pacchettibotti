@@ -1,6 +1,6 @@
-module PacchettiBotti.Machinery where
+module PacchettiBotti.Run where
 
-import           Spago.Prelude
+import           PacchettiBotti.Prelude
 
 import qualified GHC.IO
 import qualified Spago.Dhall                   as Dhall
@@ -11,8 +11,6 @@ import qualified System.IO.Temp                as Temp
 import qualified Dhall.Core
 
 import qualified PacchettiBotti.GitHub         as GitHub
-
-import           PacchettiBotti.GitHub          ( GitHubEnv )
 
 
 type Expr = Dhall.DhallExpr Dhall.Import
@@ -41,17 +39,15 @@ runAndPushMaster = runAndPushBranch "master"
 
 
 runAndOpenPR
-  :: GitHubEnv env am
-  => am
-  -> GitHub.SimplePR
+  :: HasGitHub env
+  => GitHub.SimplePR
   -> (GHC.IO.FilePath -> RIO env ())
   -> [Text]
   -> RIO env ()
-runAndOpenPR token pr@GitHub.SimplePR{ prAddress = address@GitHub.Address{..}, ..} preAction commands
-  = unlessM (GitHub.pullRequestExists token address pr) $ do
-  let openPR = GitHub.openPR token address pr
+runAndOpenPR pr@GitHub.SimplePR{ prAddress = address@GitHub.Address{..}, ..} preAction commands
+  = unlessM (GitHub.pullRequestExists address pr) $ do
+  let openPR = GitHub.openPR address pr
   runInClonedRepo address prBranchName prTitle preAction commands openPR
-
 
 
 runInClonedRepo

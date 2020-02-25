@@ -1,6 +1,6 @@
 module PacchettiBotti.Threads.PackageSets where
 
-import           Spago.Prelude
+import           PacchettiBotti.Prelude
 
 import qualified Data.Text                     as Text
 import qualified Control.Concurrent            as Concurrent
@@ -20,10 +20,9 @@ import           Spago.GlobalCache              ( RepoMetadataV1(..)
                                                 )
 
 import qualified PacchettiBotti.GitHub         as GitHub
-import qualified PacchettiBotti.Machinery      as Run
+import qualified PacchettiBotti.Run            as Run
 
 import           PacchettiBotti.Threads
-import           PacchettiBotti.GitHub          ( GitHubEnv )
 
 
 type Expr = Dhall.DhallExpr Dhall.Import
@@ -33,9 +32,9 @@ packageSetsRepo = GitHub.Address "purescript" "package-sets"
 
 -- | Watch out for the result of a `spago verify-set` command, and comment appropriately
 --   on the PR thread (if any)
-commenter :: GitHubEnv env am => am -> Message -> RIO env ()
-commenter token (NewVerification result) = do
-  maybePR <- GitHub.getPullRequestForUser token "spacchettibotti" packageSetsRepo
+commenter :: HasGitHub env => Message -> RIO env ()
+commenter (NewVerification result) = do
+  maybePR <- GitHub.getPullRequestForUser "spacchettibotti" packageSetsRepo
 
   case maybePR of
     Nothing -> do
@@ -64,8 +63,8 @@ commenter token (NewVerification result) = do
               , ""
               , "</p></details>"
               ]
-      GitHub.commentOnPR token packageSetsRepo pullRequestNumber commentBody
-commenter _ _ = pure ()
+      GitHub.commentOnPR packageSetsRepo pullRequestNumber commentBody
+commenter _ = pure ()
 
 
 data BotCommand
@@ -80,8 +79,8 @@ data BotCommand
 --   then opening a PR with the result of `spago verify-set`.
 --   Once in there, it will parse the comments on the PR to find out which
 --   packages we want to temporarily ban from the verification/upgrade process
-updater :: GitHubEnv env am => am -> Message -> RIO env ()
-updater token (NewMetadata newMetadata) = do
+updater :: HasGitHub env => Message -> RIO env ()
+updater (NewMetadata newMetadata) = do
   -- This metadata is the most up-to-date snapshot of all the repos in package-sets
   -- master branch. Among other things it contains the latest releases of all the
   -- packages in there.
@@ -139,7 +138,7 @@ updater token (NewMetadata newMetadata) = do
     logInfo $ displayShow newVersions
     -- If we have more than one package to update, let's see if we already have an
     -- open PR to package-sets. If we do we can just commit there
-    maybePR <- GitHub.getPullRequestForUser token "spacchettibotti" packageSetsRepo
+    maybePR <- GitHub.getPullRequestForUser "spacchettibotti" packageSetsRepo
 
     case maybePR of
       Nothing -> do
@@ -148,11 +147,11 @@ updater token (NewMetadata newMetadata) = do
             prTitle = "Updates " <> today
             prAddress = packageSetsRepo
             prBody = mkBody newVersions banned
-        Run.runAndOpenPR token GitHub.SimplePR{..} patchVersions commands
+        Run.runAndOpenPR GitHub.SimplePR{..} patchVersions commands
       Just GitHub.PullRequest{ pullRequestHead = GitHub.PullRequestCommit{..}, ..} -> do
         -- A PR is there and there might be updates to the banned packages, so we
         -- try to update the banlist
-        commentsForPR <- GitHub.getCommentsOnPR token packageSetsRepo pullRequestNumber
+        commentsForPR <- GitHub.getCommentsOnPR packageSetsRepo pullRequestNumber
         let newBanned = computeNewBanned commentsForPR banned packageSet
         let newVersionsWithBanned' = computePackagesToUpdate newMetadata packageSet newBanned
         let newVersions' = Map.filterWithKey removeBannedOverrides newVersionsWithBanned'
@@ -177,7 +176,7 @@ updater token (NewMetadata newMetadata) = do
               False -> logInfo "Skipping verification as there's nothing new under the sun.."
               True -> do
                 patchVersions path
-                GitHub.updatePullRequestBody token packageSetsRepo pullRequestNumber $ mkBody newVersions' newBanned
+                GitHub.updatePullRequestBody packageSetsRepo pullRequestNumber $ mkBody newVersions' newBanned
 
         Run.runAndPushBranch pullRequestCommitRef packageSetsRepo pullRequestTitle patchVersions' commands
   where
@@ -228,4 +227,4 @@ updater token (NewMetadata newMetadata) = do
             newPackage = Dhall.RecordLit $ Dhall.Map.insert "version" newPackageVersion pkgKVs
           in pure $ Dhall.RecordLit $ Dhall.Map.insert packageName newPackage kvs
     updateVersion _ _ other = pure other
-updater _ _ = pure ()
+updater _ = pure ()

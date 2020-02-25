@@ -1,6 +1,6 @@
 module PacchettiBotti where
 
-import           Spago.Prelude
+import           PacchettiBotti.Prelude
 
 import qualified Control.Concurrent            as Concurrent
 import qualified Control.Concurrent.STM.TChan  as Chan
@@ -9,6 +9,7 @@ import qualified Data.Text.Encoding            as Encoding
 import qualified GHC.IO.Encoding
 import qualified System.Environment            as Env
 
+import qualified PacchettiBotti.DB             as DB
 import qualified PacchettiBotti.GitHub         as GitHub
 import qualified PacchettiBotti.Threads.Common as Common
 import qualified PacchettiBotti.Threads.Spago  as Spago
@@ -44,37 +45,44 @@ main = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle -> do
     logInfo "Creating 'data' folder"
     mktree "data"
 
-    let spawnThread :: HasLogFunc env => Text -> (Message -> RIO LogFunc ()) -> RIO env ()
+    let env =
+          let
+            envLogFun = logFunc
+            envGithubToken = token
+            envDbHandle = DB.Handle -- TODO
+          in Env{..}
+
+    let spawnThread :: HasLogFunc env => Text -> (Message -> RIO Env ()) -> RIO env ()
         spawnThread name thread = do
           let threadLoop :: IO ()
               threadLoop = do
                 pullChan <- atomically $ Chan.dupTChan bus
-                forever $ atomically (Chan.readTChan pullChan) >>= (runRIO logFunc . thread)
+                forever $ atomically (Chan.readTChan pullChan) >>= (runRIO env . thread)
           logInfo $ "Spawning thread " <> displayShow name
-          void $ liftIO $ Concurrent.forkIO $ catch threadLoop $ \(err :: SomeException) -> runRIO logFunc $ do
+          void $ liftIO $ Concurrent.forkIO $ catch threadLoop $ \(err :: SomeException) -> runRIO env $ do
             logError $ "Thread " <> displayShow name <> " broke, restarting.."
             logError $ "Error was: " <> display err
             spawnThread name thread
 
     -- Start spawning threads
     --   General utility
-    spawnThread "writer"                  $ Common.persistState
+    spawnThread "writer"                  Common.persistState
     --   purescript repo
-    spawnThread "releaseCheckPureScript"  $ Common.checkLatestRelease token Spago.purescriptRepo
+    spawnThread "releaseCheckPureScript"  $ Common.checkLatestRelease Spago.purescriptRepo
     --   purescript-docs-search repo
-    spawnThread "releaseCheckDocsSearch"  $ Common.checkLatestRelease token Spago.docsSearchRepo
+    spawnThread "releaseCheckDocsSearch"  $ Common.checkLatestRelease Spago.docsSearchRepo
     --   spago repo
-    spawnThread "spagoUpdatePackageSets"  $ Spago.updatePackageSets token
-    spawnThread "spagoUpdateDocsSearch"   $ Spago.updateDocsSearch token
+    spawnThread "spagoUpdatePackageSets"  Spago.updatePackageSets
+    spawnThread "spagoUpdateDocsSearch"   Spago.updateDocsSearch
     --     TODO: update purescript-metadata repo on purs release
-    spawnThread "spagoUpdatePurescript"   $ Spago.updatePurescriptVersion token
+    spawnThread "spagoUpdatePurescript"   Spago.updatePurescriptVersion
     --   package-sets-metadata repo
-    spawnThread "metadataFetcher"         $ Metadata.fetcher token
-    spawnThread "metadataUpdater"         $ Metadata.updater
+    spawnThread "metadataFetcher"         Metadata.fetcher
+    spawnThread "metadataUpdater"         Metadata.updater
     -- package-sets repo
-    spawnThread "releaseCheckPackageSets" $ Common.checkLatestRelease token PackageSets.packageSetsRepo
-    spawnThread "packageSetsUpdater"      $ PackageSets.updater token
-    spawnThread "packageSetsCommenter"    $ PackageSets.commenter token
+    spawnThread "releaseCheckPackageSets" $ Common.checkLatestRelease PackageSets.packageSetsRepo
+    spawnThread "packageSetsUpdater"      PackageSets.updater
+    spawnThread "packageSetsCommenter"    PackageSets.commenter
 
     -- To kickstart the whole thing we just need to send a "heartbeat" on the bus once an hour
     -- Threads will be listening to this and act accordingly

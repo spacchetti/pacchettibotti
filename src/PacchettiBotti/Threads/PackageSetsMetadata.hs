@@ -1,6 +1,6 @@
 module PacchettiBotti.Threads.PackageSetsMetadata where
 
-import           Spago.Prelude
+import           PacchettiBotti.Prelude
 
 import qualified Control.Retry                 as Retry
 import qualified Control.Concurrent.STM.TChan  as Chan
@@ -17,9 +17,8 @@ import           Spago.GlobalCache              ( RepoMetadataV1(..) )
 import           Data.Aeson.Encode.Pretty       ( encodePretty )
 
 import qualified PacchettiBotti.GitHub         as GitHub
-import qualified PacchettiBotti.Machinery      as Run
+import qualified PacchettiBotti.Run            as Run
 
-import           PacchettiBotti.GitHub          ( GitHubEnv )
 import           PacchettiBotti.Threads
 
 
@@ -29,8 +28,8 @@ metadataRepo = GitHub.Address "spacchetti" "package-sets-metadata"
 -- | Take the latest package set from package-sets master, get a list of all the
 --   packages in there, and thenn query their commits and tags. Once done, send
 --   the package on the bus.
-fetcher :: GitHubEnv env am => am -> Message -> RIO env ()
-fetcher token RefreshState = do
+fetcher :: HasGitHub env => Message -> RIO env ()
+fetcher RefreshState = do
   logInfo "Downloading and parsing package set.."
   packageSet <- fetchPackageSet
   atomically $ Chan.writeTChan bus $ NewPackageSet packageSet
@@ -46,7 +45,7 @@ fetcher token RefreshState = do
   atomically $ Chan.writeTChan bus $ NewMetadata $ foldMap (uncurry Map.singleton) metadata
 
   where
-    fetchRepoMetadata :: HasLogFunc env => (PackageName, Package) -> RIO env (PackageName, RepoMetadataV1)
+    fetchRepoMetadata :: HasGitHub env => (PackageName, Package) -> RIO env (PackageName, RepoMetadataV1)
     fetchRepoMetadata (_, pkg@Package{ location = Local{..}, ..}) = die [ "Tried to fetch a local package: " <> displayShow pkg ]
     fetchRepoMetadata (packageName, Package{ location = Remote{ repo = Repo repoUrl, ..}, ..}) =
       Retry.recoverAll (Retry.fullJitterBackoff 50000 <> Retry.limitRetries 25) $ \Retry.RetryStatus{..} -> do
@@ -59,8 +58,8 @@ fetcher token RefreshState = do
 
         logDebug $ "Retry " <> display rsIterNumber <> ": fetching tags and commits for " <> displayShow address
 
-        !eitherTags <- GitHub.getTags token address
-        !eitherCommits <- GitHub.getCommits token address
+        !eitherTags <- GitHub.getTags address
+        !eitherCommits <- GitHub.getCommits address
 
         case (eitherTags, eitherCommits) of
           (Left _, _) -> die [ "Retry " <> display rsIterNumber <> ": failed to fetch tags" ]
@@ -78,7 +77,7 @@ fetcher token RefreshState = do
         Dhall.RecordLit pkgs -> Map.mapKeys PackageName . Dhall.Map.toMap
           <$> traverse Spago.Config.parsePackage pkgs
         something -> throwM $ Dhall.PackagesIsNotRecord something
-fetcher _ _ = pure ()
+fetcher _ = pure ()
 
 
 -- | Whenever there's a new metadata set, push it to the repo

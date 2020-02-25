@@ -1,6 +1,6 @@
 module PacchettiBotti.Threads.Common where
 
-import           Spago.Prelude
+import           PacchettiBotti.Prelude
 
 import qualified Control.Concurrent            as Concurrent
 import qualified Control.Concurrent.STM.TChan  as Chan
@@ -13,8 +13,8 @@ import           PacchettiBotti.Threads
 
 -- | Call GitHub to check for new releases of a repository
 --   When there's a new one and we don't have it in our state we send a message on the bus
-checkLatestRelease :: HasLogFunc env => GitHub.Auth -> GitHub.Address -> Message -> RIO env ()
-checkLatestRelease token address RefreshState = GitHub.getLatestRelease token address >>= \case
+checkLatestRelease :: HasGitHub env => GitHub.Address -> Message -> RIO env ()
+checkLatestRelease address RefreshState = GitHub.getLatestRelease address >>= \case
   Left err -> logWarn $ "Could not check the latest release for " <> displayShow address <> ". Error: " <> displayShow err
   Right GitHub.Release {..} -> do
     State{..} <- liftIO $ Concurrent.readMVar state
@@ -24,7 +24,7 @@ checkLatestRelease token address RefreshState = GitHub.getLatestRelease token ad
       _ -> do
         logInfo $ "Found a new release for " <> displayShow address <> ": " <> display releaseTagName
         atomically $ Chan.writeTChan bus $ NewRepoRelease address releaseTagName
-checkLatestRelease _ _ _ = pure ()
+checkLatestRelease _ _ = pure ()
 
 -- | Everything that goes on the bus is persisted in the State,
 --   so threads can access some decently-up-to-date info

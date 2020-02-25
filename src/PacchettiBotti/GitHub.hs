@@ -1,7 +1,6 @@
 module PacchettiBotti.GitHub
   ( Address(..)
   , SimplePR(..)
-  , GitHubEnv
   , getLatestRelease
   , getTags
   , getCommits
@@ -11,7 +10,6 @@ module PacchettiBotti.GitHub
   , openPR
   , pullRequestExists
   , commentOnPR
-  , GitHub.AuthMethod(..)
   , GitHub.Auth(..)
   , GitHub.Release(..)
   , GitHub.PullRequest(..)
@@ -21,7 +19,7 @@ module PacchettiBotti.GitHub
   , GitHub.mkName
   ) where
 
-import Spago.Prelude
+import Spago.Prelude hiding (Env)
 
 import qualified Data.Vector                   as Vector
 import qualified Data.Map                      as Map
@@ -31,9 +29,8 @@ import qualified GitHub
 import           Spago.GlobalCache              ( CommitHash(..)
                                                 , Tag(..)
                                                 )
+import PacchettiBotti.Env
 
-
-type GitHubEnv env am = (HasLogFunc env, GitHub.AuthMethod am)
 
 data Address = Address
   { owner :: GitHub.Name GitHub.Owner
@@ -52,22 +49,22 @@ data SimplePR = SimplePR
   }
 
 getLatestRelease
-  :: GitHubEnv env am
-  => am
-  -> Address
+  :: HasGitHub env
+  => Address
   -> RIO env (Either GitHub.Error GitHub.Release)
-getLatestRelease token address@(Address owner repo) = do
+getLatestRelease address@(Address owner repo) = do
   logInfo $ "Getting latest release for " <> displayShow address
+  token <- view githubTokenL
   liftIO $ GitHub.github token $ GitHub.latestReleaseR owner repo
 
 
 getTags
-  :: GitHubEnv env am
-  => am
-  -> Address
+  :: HasGitHub env
+  => Address
   -> RIO env (Either GitHub.Error (Maybe Tag, Map Tag CommitHash))
-getTags token address@(Address owner repo) = do
+getTags address@(Address owner repo) = do
   logInfo $ "Getting tags for " <> displayShow address
+  token <- view githubTokenL
   res <- liftIO $ GitHub.github token $ GitHub.tagsForR owner repo GitHub.FetchAll
   let f vec =
         ( Tag . GitHub.tagName <$> vec Vector.!? 0
@@ -83,23 +80,23 @@ getTags token address@(Address owner repo) = do
 
 
 getCommits
-  :: GitHubEnv env am
-  => am
-  -> Address
+  :: HasGitHub env
+  => Address
   -> RIO env (Either GitHub.Error [CommitHash])
-getCommits token address@(Address owner repo) = do
+getCommits address@(Address owner repo) = do
   logInfo $ "Getting commits for " <> displayShow address
+  token <- view githubTokenL
   res <- liftIO $ GitHub.github token $ GitHub.commitsForR owner repo GitHub.FetchAll
   pure $ fmap (Vector.toList . fmap (CommitHash . GitHub.untagName . GitHub.commitSha)) res
 
 
 getPullRequestForUser
-  :: GitHubEnv env am
-  => am
-  -> GitHub.Name GitHub.User
+  :: HasGitHub env
+  => GitHub.Name GitHub.User
   -> Address
   -> RIO env (Maybe GitHub.PullRequest)
-getPullRequestForUser token user Address{..} = do
+getPullRequestForUser user Address{..} = do
+  token <- view githubTokenL
   maybePRs <- liftIO $ fmap hush $ GitHub.github token
     $ GitHub.pullRequestsForR owner repo GitHub.stateOpen GitHub.FetchAll
   let findPRbyUser = Vector.find
@@ -117,12 +114,12 @@ getPullRequestForUser token user Address{..} = do
 
 
 getCommentsOnPR
-  :: GitHubEnv env am
-  => am
-  -> Address
+  :: HasGitHub env
+  => Address
   -> GitHub.IssueNumber
   -> RIO env [GitHub.IssueComment]
-getCommentsOnPR token Address{..} issueNumber = do
+getCommentsOnPR Address{..} issueNumber = do
+  token <- view githubTokenL
   eitherComments <- liftIO
     $ GitHub.github token
     $ GitHub.commentsR owner repo issueNumber GitHub.FetchAll
@@ -132,13 +129,13 @@ getCommentsOnPR token Address{..} issueNumber = do
 
 
 updatePullRequestBody
-  :: GitHubEnv env am
-  => am
-  -> Address
+  :: HasGitHub env
+  => Address
   -> GitHub.IssueNumber
   -> Text
   -> RIO env ()
-updatePullRequestBody token Address{..} pullRequestNumber newBody =
+updatePullRequestBody Address{..} pullRequestNumber newBody = do
+  token <- view githubTokenL
   void
     $ liftIO
     $ GitHub.github token
@@ -146,9 +143,10 @@ updatePullRequestBody token Address{..} pullRequestNumber newBody =
     $ GitHub.EditPullRequest Nothing (Just newBody) Nothing Nothing Nothing
 
 
-openPR :: GitHubEnv env am => am -> Address -> SimplePR -> RIO env ()
-openPR token Address{..} SimplePR{..} = do
+openPR :: HasGitHub env => Address -> SimplePR -> RIO env ()
+openPR Address{..} SimplePR{..} = do
   logInfo "Pushed a new commit, opening PR.."
+  token <- view githubTokenL
   response <- liftIO $ GitHub.github token
     $ GitHub.createPullRequestR owner repo
     $ GitHub.CreatePullRequest prTitle prBody prBranchName "master"
@@ -157,10 +155,11 @@ openPR token Address{..} SimplePR{..} = do
     Left err' -> logError $ "Error while creating PR: " <> displayShow err'
 
 
-pullRequestExists :: GitHubEnv env am => am -> Address -> SimplePR -> RIO env Bool
-pullRequestExists token Address{..} SimplePR{..} = do
+pullRequestExists :: HasGitHub env => Address -> SimplePR -> RIO env Bool
+pullRequestExists Address{..} SimplePR{..} = do
   logInfo $ "Checking if we ever opened a PR " <> displayShow prTitle
 
+  token <- view githubTokenL
   oldPRs <- liftIO
     $ GitHub.github token
     $ GitHub.pullRequestsForR owner repo
@@ -178,8 +177,9 @@ pullRequestExists token Address{..} SimplePR{..} = do
       pure False
 
 
-commentOnPR :: GitHubEnv env am => am -> Address -> GitHub.IssueNumber -> Text -> RIO env ()
-commentOnPR token Address{..} pullRequestNumber commentBody =
+commentOnPR :: HasGitHub env => Address -> GitHub.IssueNumber -> Text -> RIO env ()
+commentOnPR Address{..} pullRequestNumber commentBody = do
+  token <- view githubTokenL
   (liftIO $ GitHub.github token $ GitHub.createCommentR owner repo pullRequestNumber commentBody) >>= \case
-  Left err -> logError $ "Something went wrong while commenting. Error: " <> displayShow err
-  Right _ -> logInfo "Commented on the open PR"
+    Left err -> logError $ "Something went wrong while commenting. Error: " <> displayShow err
+    Right _ -> logInfo "Commented on the open PR"
