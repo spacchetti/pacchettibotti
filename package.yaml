@@ -78,8 +78,13 @@ library:
   - http-conduit
   - lens-family-core
   - megaparsec
+  - persistent
+  - persistent-sqlite
+  - persistent-template
   - process
   - retry
+  - rio
+  - rio-orphans
   - spago
   - stm
   - temporary

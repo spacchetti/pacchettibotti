@@ -30,9 +30,6 @@ data Env = Env
 class HasGitHubToken env where
   githubTokenL :: Lens' env GitHub.Auth
 
-class HasDB env where
-  dbL :: Lens' env DB.Handle
-
 class HasBus env where
   busL :: Lens' env (Chan.TChan Message)
   writeBus :: Message -> RIO env ()
@@ -44,7 +41,7 @@ class HasState env where
 
 class ( HasLogFunc env
       , HasGitHubToken env
-      , HasDB env
+      , DB.HasDB env
       , HasBus env
       , HasState env
       ) => HasEnv env where
@@ -56,7 +53,7 @@ instance HasLogFunc Env where
 instance HasGitHubToken Env where
   githubTokenL = lens envGithubToken (\x y -> x { envGithubToken = y })
 
-instance HasDB Env where
+instance DB.HasDB Env where
   dbL = lens envDB (\x y -> x { envDB = y })
 
 instance HasBus Env where
@@ -78,8 +75,6 @@ instance HasEnv Env where
   envL = id
 
 type HasGitHub env = (HasLogFunc env, HasGitHubToken env)
-
-
 
 type PackageSetMap = Map PackageName Package
 type VerificationResult = (ExitCode, Text, Text)

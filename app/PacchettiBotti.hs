@@ -26,8 +26,8 @@ main = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle -> do
   logFile <- setLogUseLoc False <$> logOptionsHandle configHandle True
 
   withLogFunc logStderr $ \logFuncConsole -> withLogFunc logFile $ \logFuncFile ->
-    let logFunc = logFuncConsole <> logFuncFile
-    in runRIO logFunc $ do
+    let envLogFun = logFuncConsole <> logFuncFile
+    in runRIO envLogFun $ do
     -- We always want to run in UTF8 anyways
     liftIO $ GHC.IO.Encoding.setLocaleEncoding GHC.IO.Encoding.utf8
     -- Stop `git` from asking for input, not gonna happen
@@ -37,24 +37,20 @@ main = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle -> do
 
     -- Read GitHub Auth Token
     logInfo "Reading GitHub token.."
-    token <- liftIO $ GitHub.OAuth . Encoding.encodeUtf8 . Text.pack
+    envGithubToken <- liftIO $ GitHub.OAuth . Encoding.encodeUtf8 . Text.pack
       <$> Env.getEnv "SPACCHETTIBOTTI_TOKEN"
 
     -- Prepare data folder that will contain the temp copies of the repos
     logInfo "Creating 'data' folder"
     mktree "data"
 
-    state <- liftIO $ Concurrent.newMVar emptyState
-    bus <- liftIO Chan.newBroadcastTChanIO
+    envState <- liftIO $ Concurrent.newMVar emptyState
+    envBus <- liftIO Chan.newBroadcastTChanIO
 
-    let env =
-          let
-            envLogFun = logFunc
-            envGithubToken = token
-            envBus = bus
-            envState = state
-            envDB = DB.Handle -- TODO
-          in Env{..}
+    logInfo "Migrating DB.."
+    envDB <- DB.mkDB
+
+    let env = Env{..}
 
     runRIO env $ do
       -- To kickstart updates we just need to send a "heartbeat" on the bus once an hour
@@ -62,7 +58,7 @@ main = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle -> do
       -- here in the main thread
       spawnThread "Heartbeat" heartbeat
 
-      pullChan <- atomically $ Chan.dupTChan bus
+      pullChan <- atomically $ Chan.dupTChan envBus
       forever $ atomically (Chan.readTChan pullChan) >>= handleMessage
 
 
@@ -76,26 +72,28 @@ handleMessage = \case
     spawnThread "releaseCheckPackageSets"
       $ Common.checkLatestRelease PackageSets.packageSetsRepo
     spawnThread "metadataFetcher" Metadata.fetcher
+
   NewRepoRelease address release -> do
     updateState
       $ \State{..} -> let newReleases = Map.insert address release latestReleases
                       in pure State{ latestReleases = newReleases , ..}
-    case address of
-      a | a == PackageSets.packageSetsRepo -> spawnThread "spagoUpdatePackageSets"
-          $ Spago.updatePackageSets release
-      a | a == Spago.purescriptRepo -> spawnThread "spagoUpdatePurescript"
-          $ Spago.updatePurescriptVersion release
-        --     TODO: update purescript-metadata repo on purs release
-      a | a == Spago.docsSearchRepo -> spawnThread "spagoUpdateDocsSearch"
-          $ Spago.updateDocsSearch release
-      _ -> logWarn $ "Got unexpected release update: " <> displayShow address
+    --     TODO: update purescript-metadata repo on purs release
+    when (address == PackageSets.packageSetsRepo) $
+      spawnThread "spagoUpdatePackageSets" (Spago.updatePackageSets release)
+    when (address == Spago.purescriptRepo) $
+      spawnThread "spagoUpdatePurescript" (Spago.updatePurescriptVersion release)
+    when (address == Spago.docsSearchRepo) $
+      spawnThread "spagoUpdateDocsSearch" (Spago.updateDocsSearch release)
+
   NewVerification result ->
     spawnThread "packageSetsCommenter" $ PackageSets.commenter result
+
   NewMetadata newMetadata -> do
     updateState
       $ \State{..} -> pure State{ metadata = newMetadata, ..}
     spawnThread "packageSetsUpdater" $ PackageSets.updater newMetadata
     spawnThread "metadataUpdater" $ Metadata.updater newMetadata
+
   NewPackageSet newPackageSet ->
     updateState
       $ \State{..} -> pure State{ packageSet = newPackageSet, ..}

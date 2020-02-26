@@ -2,3 +2,4 @@
 .stack-work
 *.log
 *.cabal
+db.sqlite*
