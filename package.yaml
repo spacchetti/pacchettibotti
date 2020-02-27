@@ -76,7 +76,6 @@ library:
   - aeson
   - http-client
   - http-conduit
-  - lens-family-core
   - megaparsec
   - persistent
   - persistent-sqlite
@@ -90,7 +89,6 @@ library:
   - temporary
   - text < 1.3
   - time
-  - turtle
   - vector
 
 executables:
@@ -104,26 +102,8 @@ executables:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
-    - aeson-pretty
-    - async-pool
     - base >= 4.7 && < 5
-    - bytestring
     - containers
-    - dhall
-    - filepath
-    - github
-    - aeson
-    - http-client
-    - http-conduit
-    - lens-family-core
-    - megaparsec
     - pacchettibotti
-    - process
-    - retry
-    - spago
     - stm
-    - temporary
     - text < 1.3
-    - time
-    - turtle
-    - vector
