@@ -3,3 +3,4 @@
 *.log
 *.cabal
 db.sqlite*
+data
