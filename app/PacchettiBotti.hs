@@ -8,12 +8,14 @@ import qualified Data.Text                     as Text
 import qualified Data.Text.Encoding            as Encoding
 import qualified GHC.IO.Encoding
 import qualified System.Environment            as Env
-import qualified Data.Map as Map
+import qualified Data.Map                      as Map
 
 import qualified PacchettiBotti.DB             as DB
 import qualified PacchettiBotti.GitHub         as GitHub
 import qualified PacchettiBotti.Threads.Common as Common
 import qualified PacchettiBotti.Threads.Spago  as Spago
+import qualified PacchettiBotti.Threads.Registry
+                                               as Registry
 import qualified PacchettiBotti.Threads.PackageSets
                                                as PackageSets
 import qualified PacchettiBotti.Threads.PackageSetsMetadata
@@ -26,8 +28,8 @@ main = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle -> do
   logFile <- setLogUseLoc False <$> logOptionsHandle configHandle True
 
   withLogFunc logStderr $ \logFuncConsole -> withLogFunc logFile $ \logFuncFile ->
-    let envLogFun = logFuncConsole <> logFuncFile
-    in runRIO envLogFun $ do
+    let envLogFunc = logFuncConsole <> logFuncFile
+    in runRIO envLogFunc $ do
     -- We always want to run in UTF8 anyways
     liftIO $ GHC.IO.Encoding.setLocaleEncoding GHC.IO.Encoding.utf8
     -- Stop `git` from asking for input, not gonna happen
@@ -53,10 +55,11 @@ main = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle -> do
     let env = Env{..}
 
     runRIO env $ do
-      -- To kickstart updates we just need to send a "heartbeat" on the bus once an hour
+      -- To kickstart updates we just need to send "heartbeats" on the bus every once in a while
       -- Threads will be listening to this, do stuff, post things on the bus which we handle
       -- here in the main thread
-      spawnThread "Heartbeat" heartbeat
+      spawnThread "Hourly Heartbeat" hourlyHeartbeat
+      spawnThread "Daily Heartbeat" dailyHeartbeat
 
       pullChan <- atomically $ Chan.dupTChan envBus
       forever $ atomically (Chan.readTChan pullChan) >>= handleMessage
@@ -64,7 +67,10 @@ main = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle -> do
 
 handleMessage :: HasEnv env => Message -> RIO env ()
 handleMessage = \case
-  RefreshState -> do
+  DailyUpdate -> do
+    spawnThread "Bower packages daily update"
+      $ Registry.refreshBowerPackages
+  HourlyUpdate -> do
     spawnThread "releaseCheckPureScript"
       $ Common.checkLatestRelease Spago.purescriptRepo
     spawnThread "releaseCheckDocsSearch"
@@ -88,15 +94,13 @@ handleMessage = \case
   NewVerification result ->
     spawnThread "packageSetsCommenter" $ PackageSets.commenter result
 
-  NewMetadata newMetadata -> do
-    updateState
-      $ \State{..} -> pure State{ metadata = newMetadata, ..}
-    spawnThread "packageSetsUpdater" $ PackageSets.updater newMetadata
-    spawnThread "metadataUpdater" $ Metadata.updater newMetadata
+  NewMetadata -> do
+    spawnThread "packageSetsUpdater" PackageSets.updater
+    spawnThread "metadataUpdater"    Metadata.updater
 
-  NewPackageSet newPackageSet ->
-    updateState
-      $ \State{..} -> pure State{ packageSet = newPackageSet, ..}
+  NewPackageSet -> pure ()
+
+  NewBowerRefresh -> pure ()
 
 
 spawnThread :: HasEnv env => Text -> RIO Env () -> RIO env ()
@@ -110,11 +114,16 @@ spawnThread name thread = do
       logError $ "Thread " <> displayShow name <> " broke, error was:"
       logError $ display err
 
-heartbeat :: (HasLogFunc env, HasBus env) => RIO env ()
-heartbeat = forever $ do
-  logInfo "Refreshing state.."
-  writeBus RefreshState
+
+hourlyHeartbeat :: (HasLogFunc env, HasBus env) => RIO env ()
+hourlyHeartbeat = forever $ do
+  logDebug "Sending hourly heartbeat"
+  writeBus HourlyUpdate
   sleep _60m
-  where
-    _60m = 60 * 60 * 1000000
-    sleep = liftIO . Concurrent.threadDelay
+
+
+dailyHeartbeat :: (HasLogFunc env, HasBus env) => RIO env ()
+dailyHeartbeat = forever $ do
+  logDebug "Sending daily heartbeat"
+  writeBus DailyUpdate
+  sleep _24h

@@ -19,16 +19,19 @@ module PacchettiBotti.GitHub
   , GitHub.mkName
   ) where
 
-import Spago.Prelude hiding (Env)
+import           Spago.Prelude           hiding ( Env )
 
 import qualified Data.Vector                   as Vector
-import qualified Data.Map                      as Map
 import qualified GitHub
 
+import qualified PacchettiBotti.DB             as DB
+
+import           PacchettiBotti.Env
+import           PacchettiBotti.Types
+import           Spago.Types
 import           Spago.GlobalCache              ( CommitHash(..)
                                                 , Tag(..)
                                                 )
-import PacchettiBotti.Env
 
 
 data SimplePR = SimplePR
@@ -50,34 +53,37 @@ getLatestRelease address@(Address owner repo) = do
 
 getTags
   :: HasGitHub env
-  => Address
-  -> RIO env (Either GitHub.Error (Maybe Tag, Map Tag CommitHash))
-getTags address@(Address owner repo) = do
+  => PackageName
+  -> Address
+  -> RIO env (Either GitHub.Error [DB.Release])
+getTags packageName address@(Address owner repo) = do
   logInfo $ "Getting tags for " <> displayShow address
   token <- view githubTokenL
   res <- liftIO $ GitHub.github token $ GitHub.tagsForR owner repo GitHub.FetchAll
-  let f vec =
-        ( Tag . GitHub.tagName <$> vec Vector.!? 0
-        , Map.fromList
-          $ Vector.toList
-          $ fmap (\t ->
-                    ( Tag $ GitHub.tagName t
-                    , CommitHash $ GitHub.branchCommitSha $ GitHub.tagCommit t
-                    ))
-          vec
-        )
-  pure (fmap f res)
+  pure $ (Vector.toList . fmap mkRelease) <$> res
+  where
+    mkRelease GitHub.Tag{..} = DB.Release{..}
+      where
+        releaseTag = Tag tagName
+        releasePackage = packageName
+        releaseCommit = CommitHash $ GitHub.branchCommitSha tagCommit
 
 
 getCommits
   :: HasGitHub env
-  => Address
-  -> RIO env (Either GitHub.Error [CommitHash])
-getCommits address@(Address owner repo) = do
+  => PackageName
+  -> Address
+  -> RIO env (Either GitHub.Error [DB.Commit])
+getCommits packageName address@(Address owner repo) = do
   logInfo $ "Getting commits for " <> displayShow address
   token <- view githubTokenL
   res <- liftIO $ GitHub.github token $ GitHub.commitsForR owner repo GitHub.FetchAll
-  pure $ fmap (Vector.toList . fmap (CommitHash . GitHub.untagName . GitHub.commitSha)) res
+  pure $ (Vector.toList . fmap mkCommit) <$> res
+  where
+    mkCommit GitHub.Commit{..} = DB.Commit{..}
+      where
+        commitCommit = CommitHash $ GitHub.untagName commitSha
+        commitPackage = packageName
 
 
 getPullRequestForUser

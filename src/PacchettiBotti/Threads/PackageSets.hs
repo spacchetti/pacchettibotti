@@ -14,12 +14,13 @@ import qualified Spago.Dhall                   as Dhall
 import qualified Dhall.Map
 
 import           Spago.Types
-import           Spago.GlobalCache              ( RepoMetadataV1(..), ReposMetadataV1
-                                                , Tag(..)
+import           Spago.GlobalCache              ( RepoMetadataV1(..),
+                                                 Tag(..)
                                                 )
 
 import qualified PacchettiBotti.GitHub         as GitHub
 import qualified PacchettiBotti.Run            as Run
+import qualified PacchettiBotti.DB             as DB
 
 
 type Expr = Dhall.DhallExpr Dhall.Import
@@ -75,8 +76,13 @@ data BotCommand
 --   then opening a PR with the result of `spago verify-set`.
 --   Once in there, it will parse the comments on the PR to find out which
 --   packages we want to temporarily ban from the verification/upgrade process
-updater :: HasEnv env => ReposMetadataV1 -> RIO env ()
-updater newMetadata = do
+updater :: HasEnv env => RIO env ()
+updater = do
+  -- Let's get the package set and its metadata from DB
+  (packageSet, newMetadata) <- DB.transact $ do
+    p <- DB.getPackageSet
+    m <- DB.getPackageSetMetadata
+    pure (p, m)
   -- This metadata is the most up-to-date snapshot of all the repos in package-sets
   -- master branch. Among other things it contains the latest releases of all the
   -- packages in there.
@@ -86,28 +92,28 @@ updater newMetadata = do
   -- In doing this we consider packages that might have been "banned"
   -- (i.e. that we don't want to update)
   let intersectionMaybe f = Map.merge Map.dropMissing Map.dropMissing (Map.zipWithMaybeMatched f)
-  let computePackagesToUpdate metadata packageSet banned
+  let computePackagesToUpdate metadata banned
         = intersectionMaybe pickPackage metadata packageSet
         where
-          pickPackage :: PackageName -> RepoMetadataV1 -> Package -> Maybe (Tag, Text)
+          pickPackage :: PackageName -> RepoMetadataV1 -> DB.Package -> Maybe (Tag, Text)
           -- | We throw away packages without a release
           pickPackage _ RepoMetadataV1{ latest = Nothing, ..} _ = Nothing
-          -- | And the local ones
-          pickPackage _ _ Package{ location = Local _, ..} = Nothing
+          -- | And the ones that are not in the set
+          pickPackage _ _ DB.Package{ packageSetVersion = Nothing, ..} = Nothing
           -- | For the remaining ones: we pick the latest from metadata if it's
           --   different from the one we have in the set. Except if that version
           --   is banned, in that case we pick it from the package set
-          pickPackage packageName RepoMetadataV1{ latest = Just latest, owner } Package{ location = Remote{ version } }
-            = case (latest == Tag version, Set.member (packageName, latest) banned) of
+          pickPackage _ RepoMetadataV1{ latest = Just latest, owner } DB.Package{ packageSetVersion = Just version, ..}
+            = case (latest == version, Set.member (packageName, latest) banned) of
                 (True, _) -> Nothing
-                (_, True) -> Just (Tag version, owner)
+                (_, True) -> Just (version, owner)
                 (_, _)    -> Just (latest, owner)
 
   State{..} <- readState
-  let removeBannedOverrides packageName (Tag tag, _) = case Map.lookup packageName packageSet of
-        Just Package{ location = Remote {version}} | tag == version -> False
+  let removeBannedOverrides packageName (tag, _) = case Map.lookup packageName packageSet of
+        Just DB.Package{ packageSetVersion = Just version } | tag == version -> False
         _ -> True
-  let newVersionsWithBanned = computePackagesToUpdate newMetadata packageSet banned
+  let newVersionsWithBanned = computePackagesToUpdate newMetadata banned
   let newVersions = Map.filterWithKey removeBannedOverrides newVersionsWithBanned
 
   let patchVersions :: (HasLogFunc env, HasBus env) => GHC.IO.FilePath -> RIO env ()
@@ -149,7 +155,7 @@ updater newMetadata = do
         -- try to update the banlist
         commentsForPR <- GitHub.getCommentsOnPR packageSetsRepo pullRequestNumber
         let newBanned = computeNewBanned commentsForPR banned packageSet
-        let newVersionsWithBanned' = computePackagesToUpdate newMetadata packageSet newBanned
+        let newVersionsWithBanned' = computePackagesToUpdate newMetadata newBanned
         let newVersions' = Map.filterWithKey removeBannedOverrides newVersionsWithBanned'
 
         -- Since a PR is already there we might have to skip verification,
@@ -182,8 +188,8 @@ updater newMetadata = do
       $ mapMaybe parseComment comments
       where
         applyCommand :: Map PackageName Tag -> BotCommand -> Map PackageName Tag
-        applyCommand bannedMap (Ban package) | Just Package{ location = Remote{ version }} <- Map.lookup package packageSet
-          = Map.insert package (Tag version) bannedMap
+        applyCommand bannedMap (Ban package) | Just DB.Package{ packageSetVersion = Just version } <- Map.lookup package packageSet
+          = Map.insert package version bannedMap
         applyCommand bannedMap (Unban package) = Map.delete package bannedMap
         applyCommand bannedMap _ = bannedMap
 

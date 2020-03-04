@@ -4,19 +4,20 @@ import           PacchettiBotti.Prelude
 
 import qualified Control.Retry                 as Retry
 import qualified Data.Map.Strict               as Map
-import qualified Data.Text                     as Text
 import qualified Spago.Dhall                   as Dhall
 import qualified Dhall.Map
 import qualified Spago.Config
 import qualified Data.ByteString.Lazy          as BSL
 import qualified GHC.IO
 
-import           Spago.Types
-import           Spago.GlobalCache              ( RepoMetadataV1(..), ReposMetadataV1 )
-import           Data.Aeson.Encode.Pretty       ( encodePretty )
-
 import qualified PacchettiBotti.GitHub         as GitHub
 import qualified PacchettiBotti.Run            as Run
+import qualified PacchettiBotti.DB             as DB
+
+import           Spago.Types
+import           PacchettiBotti.Types
+import           Data.Aeson.Encode.Pretty       ( encodePretty )
+
 
 
 metadataRepo :: GitHub.Address
@@ -29,45 +30,49 @@ fetcher :: HasEnv env => RIO env ()
 fetcher = do
   logInfo "Downloading and parsing package set.."
   packageSet <- fetchPackageSet
-  writeBus $ NewPackageSet packageSet
+  DB.transact $ DB.replacePackageSet packageSet
+  writeBus NewPackageSet
   let packages = Map.toList packageSet
   logInfo $ "Fetching metadata for " <> display (length packages) <> " packages"
 
-  -- Call GitHub for all these packages and get metadata for them
-  !metadata <- withTaskGroup' 10 $ \taskGroup -> do
+  -- Call GitHub for all these packages, get metadata for them, save to DB
+  void $ withTaskGroup' 10 $ \taskGroup -> do
     asyncs <- for packages (async' taskGroup . fetchRepoMetadata)
     for asyncs wait'
 
-  logInfo "Fetched all metadata."
-  writeBus $ NewMetadata $ foldMap (uncurry Map.singleton) metadata
+  logInfo "Fetched all metadata, saved to DB."
+  writeBus NewMetadata
 
   where
-    fetchRepoMetadata :: HasGitHub env => (PackageName, Package) -> RIO env (PackageName, RepoMetadataV1)
+    fetchRepoMetadata :: HasEnv env => (PackageName, Package) -> RIO env ()
     fetchRepoMetadata (_, pkg@Package{ location = Local{..}, ..}) = die [ "Tried to fetch a local package: " <> displayShow pkg ]
     fetchRepoMetadata (packageName, Package{ location = Remote{ repo = Repo repoUrl, ..}, ..}) =
-      Retry.recoverAll (Retry.fullJitterBackoff 50000 <> Retry.limitRetries 25) $ \Retry.RetryStatus{..} -> do
-        let !(owner:repo:_rest)
-              = Text.split (=='/') $ Text.replace "https://github.com/" ""
-                (if Text.isSuffixOf ".git" repoUrl
-                 then Text.dropEnd 4 repoUrl
-                 else repoUrl)
-            address = GitHub.Address (GitHub.mkName Proxy owner) (GitHub.mkName Proxy repo)
-
+      Retry.recoverAll (Retry.fullJitterBackoff 50000 <> Retry.limitRetries 10) $ \Retry.RetryStatus{..} -> do
+        let address@Address{..} = case parseAddress repoUrl of
+              Right a -> a
+              Left err -> error $ show err
         logDebug $ "Retry " <> display rsIterNumber <> ": fetching tags and commits for " <> displayShow address
 
-        !eitherTags <- GitHub.getTags address
-        !eitherCommits <- GitHub.getCommits address
+        !eitherTags <- GitHub.getTags packageName address
+        !eitherCommits <- GitHub.getCommits packageName address
 
         case (eitherTags, eitherCommits) of
           (Left _, _) -> die [ "Retry " <> display rsIterNumber <> ": failed to fetch tags" ]
           (_, Left _) -> die [ "Retry " <> display rsIterNumber <> ": failed to fetch commits" ]
-          (Right (latest, tags), Right commits) ->
-            pure (packageName, RepoMetadataV1{..})
+          (Right tags, Right commits) -> do
+            logInfo $ "Got tags and commits for " <> displayShow address
+            DB.transact $ do
+              let package = DB.Package packageName address Nothing
+              void $ DB.insertPackage package
+              DB.insertReleases tags
+              DB.insertCommits commits
 
 
     -- | Tries to read in a PackageSet from GitHub, master branch
     --   (so we always get the most up to date and we don't have to wait for a release)
-    fetchPackageSet :: (MonadIO m, MonadThrow m, MonadReader env m, HasLogFunc env) => m PackageSetMap
+    fetchPackageSet
+      :: (MonadIO m, MonadThrow m, MonadReader env m, HasLogFunc env)
+      => m (Map PackageName Package)
     fetchPackageSet = do
       expr <- liftIO $ Dhall.inputExpr "https://raw.githubusercontent.com/purescript/package-sets/master/src/packages.dhall"
       case expr of
@@ -77,8 +82,10 @@ fetcher = do
 
 
 -- | Whenever there's a new metadata set, push it to the repo
-updater :: HasLogFunc env => ReposMetadataV1 -> RIO env ()
-updater metadata = do
+updater :: (HasDB env, HasLogFunc env) => RIO env ()
+updater = do
+  -- Get metadata
+  metadata <- DB.transact DB.getPackageSetMetadata
   -- Write the metadata to file
   let writeMetadata :: HasLogFunc env => GHC.IO.FilePath -> RIO env ()
       writeMetadata tempfolder = do

@@ -3,7 +3,7 @@ packages:
 - .
 extra-deps:
 - github: purescript/spago
-  commit: 78ce1b859c2d6daada26deb867d8f26d3a688aac
+  commit: 8c87389f88b9caf00b505aaf35efba24836a4098
 - dhall-1.29.0
 - atomic-write-0.2.0.7
 - prettyprinter-1.5.1

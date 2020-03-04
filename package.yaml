@@ -65,18 +65,21 @@ default-extensions:
 library:
   source-dirs: src
   dependencies:
+  - aeson
   - aeson-pretty
   - async-pool
   - base >= 4.7 && < 5
   - bytestring
   - containers
   - dhall
+  - filelock
   - filepath
   - github
-  - aeson
+  - http-api-data
   - http-client
   - http-conduit
   - megaparsec
+  - path-pieces
   - persistent
   - persistent-sqlite
   - persistent-template
@@ -84,6 +87,7 @@ library:
   - retry
   - rio
   - rio-orphans
+  - semver-range
   - spago
   - stm
   - temporary

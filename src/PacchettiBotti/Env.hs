@@ -1,22 +1,22 @@
-module PacchettiBotti.Env where
+module PacchettiBotti.Env
+  ( module PacchettiBotti.Env
+  , DB.HasDB
+  ) where
 
-import           Spago.Prelude           hiding ( Env )
+import           Spago.Prelude           hiding ( Env, HasEnv )
 
 import qualified Control.Concurrent            as Concurrent
 import qualified Control.Concurrent.STM.TChan  as Chan
 import qualified GitHub
 import qualified PacchettiBotti.DB             as DB
-import qualified Data.Text as Text
 
-import           Spago.GlobalCache              ( ReposMetadataV1
-                                                , Tag(..)
-                                                )
+import           Spago.GlobalCache              ( Tag(..) )
 import           Spago.Types
+import           PacchettiBotti.Types
 
 
--- TODO: rename this to envLogFunc
 data Env = Env
-  { envLogFun :: !LogFunc
+  { envLogFunc :: !LogFunc
   , envGithubToken :: !GitHub.Auth
   , envDB :: !DB.Handle
   -- | Main message bus. It is write-only so you should use `spawnThread` to read from it
@@ -48,7 +48,7 @@ class ( HasLogFunc env
   envL :: Lens' env Env
 
 instance HasLogFunc Env where
-  logFuncL = lens envLogFun (\x y -> x { envLogFun = y })
+  logFuncL = lens envLogFunc (\x y -> x { envLogFunc = y })
 
 instance HasGitHubToken Env where
   githubTokenL = lens envGithubToken (\x y -> x { envGithubToken = y })
@@ -76,21 +76,20 @@ instance HasEnv Env where
 
 type HasGitHub env = (HasLogFunc env, HasGitHubToken env)
 
-type PackageSetMap = Map PackageName Package
 type VerificationResult = (ExitCode, Text, Text)
 
 data Message
-  = RefreshState
+  = HourlyUpdate
+  | DailyUpdate
   | NewRepoRelease !Address !Text
-  | NewPackageSet !PackageSetMap
-  | NewMetadata !ReposMetadataV1
   | NewVerification !VerificationResult
+  | NewPackageSet
+  | NewMetadata
+  | NewBowerRefresh
   deriving (Show)
 
 data State = State
   { latestReleases :: !(Map Address Text)
-  , packageSet     :: !PackageSetMap
-  , metadata       :: !ReposMetadataV1
   , banned         :: !(Set (PackageName, Tag))
   } deriving (Show)
 
@@ -98,16 +97,4 @@ emptyState :: State
 emptyState = State{..}
   where
     latestReleases = mempty
-    packageSet = mempty
-    metadata = mempty
     banned = mempty
-
-
-data Address = Address
-  { owner :: GitHub.Name GitHub.Owner
-  , repo  :: GitHub.Name GitHub.Repo
-  } deriving (Eq, Ord)
-
-instance Show Address where
-  show (Address owner repo) = Text.unpack
-    $ "\"" <> GitHub.untagName owner <> "/" <> GitHub.untagName repo <> "\""
