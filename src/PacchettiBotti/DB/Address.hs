@@ -1,4 +1,4 @@
-module PacchettiBotti.Types where
+module PacchettiBotti.DB.Address where
 
 import           Spago.Prelude
 

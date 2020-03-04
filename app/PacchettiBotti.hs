@@ -8,11 +8,11 @@ import qualified Data.Text                     as Text
 import qualified Data.Text.Encoding            as Encoding
 import qualified GHC.IO.Encoding
 import qualified System.Environment            as Env
-import qualified Data.Map                      as Map
 
 import qualified PacchettiBotti.DB             as DB
 import qualified PacchettiBotti.GitHub         as GitHub
-import qualified PacchettiBotti.Threads.Common as Common
+import qualified PacchettiBotti.Threads.Generic
+                                               as Common
 import qualified PacchettiBotti.Threads.Spago  as Spago
 import qualified PacchettiBotti.Threads.Registry
                                                as Registry
@@ -46,7 +46,6 @@ main = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle -> do
     logInfo "Creating 'data' folder"
     mktree "data"
 
-    envState <- liftIO $ Concurrent.newMVar emptyState
     envBus <- liftIO Chan.newBroadcastTChanIO
 
     logInfo "Migrating DB.."
@@ -67,29 +66,27 @@ main = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle -> do
 
 handleMessage :: HasEnv env => Message -> RIO env ()
 handleMessage = \case
-  DailyUpdate -> do
+  DailyUpdate ->
     spawnThread "Bower packages daily update"
       $ Registry.refreshBowerPackages
   HourlyUpdate -> do
     spawnThread "releaseCheckPureScript"
-      $ Common.checkLatestRelease Spago.purescriptRepo
+      $ Common.checkLatestRelease Spago.purescriptPackageName Spago.purescriptRepo
     spawnThread "releaseCheckDocsSearch"
-      $ Common.checkLatestRelease Spago.docsSearchRepo
+      $ Common.checkLatestRelease Spago.docsSearchPackageName Spago.docsSearchRepo
     spawnThread "releaseCheckPackageSets"
-      $ Common.checkLatestRelease PackageSets.packageSetsRepo
+      $ Common.checkLatestRelease PackageSets.packageSetsPackageName PackageSets.packageSetsRepo
     spawnThread "metadataFetcher" Metadata.fetcher
 
-  NewRepoRelease address release -> do
-    updateState
-      $ \State{..} -> let newReleases = Map.insert address release latestReleases
-                      in pure State{ latestReleases = newReleases , ..}
-    --     TODO: update purescript-metadata repo on purs release
-    when (address == PackageSets.packageSetsRepo) $
-      spawnThread "spagoUpdatePackageSets" (Spago.updatePackageSets release)
-    when (address == Spago.purescriptRepo) $
-      spawnThread "spagoUpdatePurescript" (Spago.updatePurescriptVersion release)
-    when (address == Spago.docsSearchRepo) $
-      spawnThread "spagoUpdateDocsSearch" (Spago.updateDocsSearch release)
+  NewPureScriptRelease ->
+    spawnThread "spagoUpdatePurescript" Spago.updatePurescriptVersion
+    -- TODO: update purescript-metadata repo on purs release
+
+  NewPackageSetsRelease ->
+    spawnThread "spagoUpdatePackageSets" Spago.updatePackageSets
+    
+  NewDocsSearchRelease ->
+    spawnThread "spagoUpdateDocsSearch" Spago.updateDocsSearch
 
   NewVerification result ->
     spawnThread "packageSetsCommenter" $ PackageSets.commenter result
@@ -100,7 +97,7 @@ handleMessage = \case
 
   NewPackageSet -> pure ()
 
-  NewBowerRefresh -> pure ()
+  NewBowerRefresh -> pure () -- TODO: do something after we refresh releases from there
 
 
 spawnThread :: HasEnv env => Text -> RIO Env () -> RIO env ()

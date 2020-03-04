@@ -9,11 +9,9 @@ import qualified PacchettiBotti.Static         as Static
 import qualified Control.Retry                 as Retry
 import qualified PacchettiBotti.DB             as DB
 
-import           Spago.Types
-import           PacchettiBotti.Types
 
-bowerPackages :: Map PackageName Address
-bowerPackages = snd $ Map.mapEither parseAddress bowerPackagesMap
+bowerPackages :: Map PackageName DB.Address
+bowerPackages = snd $ Map.mapEither DB.parseAddress bowerPackagesMap
   where
     bowerPackagesMap :: Map PackageName Text
     bowerPackagesMap = fromRight mempty $ Json.eitherDecodeStrict Static.bowerPackagesJson
@@ -23,7 +21,7 @@ refreshBowerPackages = do
   logInfo $ "Fetching release info for " <> display (length bowerPackages) <> " packages"
 
   -- Call GitHub for all these packages, get releases for them, write them to DB
-  void $ withTaskGroup' 10 $ \taskGroup -> do
+  void $ withTaskGroup' 5 $ \taskGroup -> do
     asyncs <- for (Map.toList bowerPackages) (async' taskGroup . fetchRepoMetadata)
     for asyncs wait'
 
@@ -33,9 +31,9 @@ refreshBowerPackages = do
   where
     fetchRepoMetadata
       :: (HasGitHub env, HasDB env)
-      => (PackageName, Address) -> RIO env ()
+      => (PackageName, DB.Address) -> RIO env ()
     fetchRepoMetadata (packageName, address) =
-      Retry.recoverAll (Retry.fullJitterBackoff 50000 <> Retry.limitRetries 25) $ \Retry.RetryStatus{..} -> do
+      Retry.recoverAll (Retry.fullJitterBackoff 500000 <> Retry.limitRetries 20) $ \Retry.RetryStatus{..} -> do
         logDebug $ "Retry " <> display rsIterNumber <> ": fetching releases for " <> displayShow address
 
         !eitherTags <- GitHub.getTags packageName address

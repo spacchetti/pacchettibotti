@@ -5,6 +5,8 @@ module PacchettiBotti.DB
   , Handle
   , Query
   , HasDB(..)
+  , getLatestRelease
+  , getBannedReleases
   , getPackageSet
   , getPackageSetMetadata
   , insertPackage
@@ -23,12 +25,12 @@ import qualified Data.Ord
 import qualified Spago.Types                   as Spago
 import qualified GitHub
 import qualified Data.SemVer                   as SemVer
+import qualified Data.Set as Set
 
 import           Database.Persist.Sqlite        ( (=.)
                                                 , (==.)
                                                 )
 import           PacchettiBotti.DB.Schema
-import           PacchettiBotti.Types
 import           System.FileLock                ( withFileLock
                                                 , SharedExclusive(..)
                                                 )
@@ -110,6 +112,29 @@ replacePackageSet newPackageSet = do
           Right address -> Just $ Package packageName address (Just $ Tag version)
 
 
+getReleases :: Spago.PackageName -> Query [Release]
+getReleases packageName = fmap Persist.entityVal 
+  <$> Persist.selectList [ ReleasePackage ==. packageName ] [ ]
+
+getLatestRelease :: Spago.PackageName -> Query (Maybe Tag)
+getLatestRelease package = do
+  releases <- getReleases package
+  -- TODO: ideally we want to store these in the DB as SemVer already
+  let parseTag (Tag tag) = SemVer.parseSemVer tag
+  let renderSV = ("v" <>) . SemVer.renderSV
+  let semverTags = (parseTag . releaseTag) <$> releases
+  pure $ fmap (Tag . renderSV) $ headMay $ List.sortOn Data.Ord.Down $ rights semverTags
+
+
+getBannedReleases :: Query (Set (Spago.PackageName, Tag))
+getBannedReleases = do 
+  bannedReleases <- fmap Persist.entityVal 
+    <$> Persist.selectList [ ReleaseBanned ==. True ] [ ]
+  pure $ Set.fromList $ toTuple <$> bannedReleases
+  where
+    toTuple Release{..} = (releasePackage, releaseTag)
+
+
 getPackageSetMetadata :: Query ReposMetadataV1
 getPackageSetMetadata = do
   packageSetMap <- getPackageSet
@@ -123,13 +148,8 @@ getPackageSetMetadata = do
       let owner = GitHub.untagName owner'
       commits <- fmap (commitCommit . Persist.entityVal)
         <$> Persist.selectList [ CommitPackage ==. packageName ] [ ]
-      releases <- fmap Persist.entityVal
-        <$> Persist.selectList [ ReleasePackage ==. packageName ] [ ]
-      -- TODO: ideally we want to store these in the DB as SemVer already
-      let parseTag (Tag tag) = SemVer.parseSemVer tag
-      let renderSV = ("v" <>) . SemVer.renderSV
-      let semverTags = (parseTag . releaseTag) <$> releases
-      let latest = fmap (Tag . renderSV) $ headMay $ List.sortOn Data.Ord.Down $ rights semverTags
+      releases <- getReleases packageName
+      latest <- getLatestRelease packageName
       let tags = Map.fromList $ toMetadataTag <$> releases
       pure RepoMetadataV1{..}
 

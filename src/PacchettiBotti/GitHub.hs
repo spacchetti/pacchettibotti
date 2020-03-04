@@ -27,7 +27,7 @@ import qualified GitHub
 import qualified PacchettiBotti.DB             as DB
 
 import           PacchettiBotti.Env
-import           PacchettiBotti.Types
+import           PacchettiBotti.DB              ( Address(..) )
 import           Spago.Types
 import           Spago.GlobalCache              ( CommitHash(..)
                                                 , Tag(..)
@@ -66,6 +66,7 @@ getTags packageName address@(Address owner repo) = do
       where
         releaseTag = Tag tagName
         releasePackage = packageName
+        releaseBanned = False
         releaseCommit = CommitHash $ GitHub.branchCommitSha tagCommit
 
 

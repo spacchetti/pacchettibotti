@@ -1,5 +1,9 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
-module PacchettiBotti.DB.Orphans where
+module PacchettiBotti.DB.Types 
+  ( module PacchettiBotti.DB.Types
+  , Address(..)
+  , parseAddress
+  ) where
 
 import Spago.Prelude
 
@@ -18,6 +22,7 @@ import           Database.Persist.Sqlite        ( PersistField
                                                 , fromPersistValue
                                                 , toPersistValue
                                                 )
+import PacchettiBotti.DB.Address
 
 
 instance PersistField Tag where
@@ -63,3 +68,31 @@ instance PersistField PrereleaseTags where
 
 instance PersistField PrereleaseTag
 -}
+
+
+data FetchType
+  = ReleasesFetch Address
+  | CommitsFetch Address
+  deriving (Show, Read, Eq, Ord, Data, Generic)
+
+instance FromJSON FetchType 
+instance ToJSON FetchType
+
+instance PersistField FetchType where
+  toPersistValue v = toPersistValue $ case v of 
+    ReleasesFetch address -> ("releases" :: Text, address)
+    CommitsFetch address -> ("commits", address)
+  fromPersistValue v = case fromPersistValue v of
+    Right ("releases" :: Text, address) -> Right $ ReleasesFetch address
+    Right ("commits", address) -> Right $ CommitsFetch address
+    Right other -> Left $ "Got other stuff when decoding FetchType: " <> tshow other
+    Left err -> Left err
+
+instance PersistFieldSql FetchType where
+  sqlType _ = SqlString
+
+instance PathPiece FetchType
+
+instance FromHttpApiData FetchType
+
+instance ToHttpApiData FetchType

@@ -14,11 +14,6 @@ import qualified PacchettiBotti.GitHub         as GitHub
 import qualified PacchettiBotti.Run            as Run
 import qualified PacchettiBotti.DB             as DB
 
-import           Spago.Types
-import           PacchettiBotti.Types
-import           Data.Aeson.Encode.Pretty       ( encodePretty )
-
-
 
 metadataRepo :: GitHub.Address
 metadataRepo = GitHub.Address "spacchetti" "package-sets-metadata"
@@ -36,7 +31,7 @@ fetcher = do
   logInfo $ "Fetching metadata for " <> display (length packages) <> " packages"
 
   -- Call GitHub for all these packages, get metadata for them, save to DB
-  void $ withTaskGroup' 10 $ \taskGroup -> do
+  void $ withTaskGroup' 5 $ \taskGroup -> do
     asyncs <- for packages (async' taskGroup . fetchRepoMetadata)
     for asyncs wait'
 
@@ -48,7 +43,7 @@ fetcher = do
     fetchRepoMetadata (_, pkg@Package{ location = Local{..}, ..}) = die [ "Tried to fetch a local package: " <> displayShow pkg ]
     fetchRepoMetadata (packageName, Package{ location = Remote{ repo = Repo repoUrl, ..}, ..}) =
       Retry.recoverAll (Retry.fullJitterBackoff 50000 <> Retry.limitRetries 10) $ \Retry.RetryStatus{..} -> do
-        let address@Address{..} = case parseAddress repoUrl of
+        let address@DB.Address{..} = case DB.parseAddress repoUrl of
               Right a -> a
               Left err -> error $ show err
         logDebug $ "Retry " <> display rsIterNumber <> ": fetching tags and commits for " <> displayShow address

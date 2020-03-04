@@ -13,11 +13,6 @@ import qualified Text.Megaparsec               as Parse
 import qualified Spago.Dhall                   as Dhall
 import qualified Dhall.Map
 
-import           Spago.Types
-import           Spago.GlobalCache              ( RepoMetadataV1(..),
-                                                 Tag(..)
-                                                )
-
 import qualified PacchettiBotti.GitHub         as GitHub
 import qualified PacchettiBotti.Run            as Run
 import qualified PacchettiBotti.DB             as DB
@@ -27,6 +22,10 @@ type Expr = Dhall.DhallExpr Dhall.Import
 
 packageSetsRepo :: GitHub.Address
 packageSetsRepo = GitHub.Address "purescript" "package-sets"
+
+packageSetsPackageName :: PackageName
+packageSetsPackageName = PackageName "__internal__.package-sets"
+
 
 -- | Watch out for the result of a `spago verify-set` command, and comment appropriately
 --   on the PR thread (if any)
@@ -38,7 +37,7 @@ commenter result = do
     Nothing -> do
       logWarn "Could not find an open PR, waiting 5 mins.."
       liftIO $ Concurrent.threadDelay (5 * 60 * 1000000)
-      writeBus $ NewVerification result
+      writeBus (NewVerification result)
     Just GitHub.PullRequest{..} -> do
       let commentBody = case result of
             (ExitSuccess, _, _) -> "Result of `spago verify-set` in a clean project: **success** 🎉"
@@ -109,7 +108,7 @@ updater = do
                 (_, True) -> Just (version, owner)
                 (_, _)    -> Just (latest, owner)
 
-  State{..} <- readState
+  banned <- DB.transact DB.getBannedReleases
   let removeBannedOverrides packageName (tag, _) = case Map.lookup packageName packageSet of
         Just DB.Package{ packageSetVersion = Just version } | tag == version -> False
         _ -> True
