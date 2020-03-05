@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
-module PacchettiBotti.DB.Types 
+module PacchettiBotti.DB.Types
   ( module PacchettiBotti.DB.Types
   , Address(..)
   , parseAddress
@@ -56,30 +56,16 @@ instance ToHttpApiData PackageName where
   toHeader     (PackageName t) = encodeUtf8 t
   toQueryParam (PackageName t) = t
 
-{-
-instance PersistField SemVer where 
-  toPersistValue SemVer{..} = toPersistValue ([svMajor, svMinor, svPatch], (svTags, svBuildMetadata))
-
-instance PersistFieldSql SemVer where
-  sqlType _ = SqlString
-
-instance PersistField PrereleaseTags where
-  toPersistValue (PrereleaseTags ts) = toPersistValue ts
-
-instance PersistField PrereleaseTag
--}
-
-
 data FetchType
   = ReleasesFetch Address
   | CommitsFetch Address
   deriving (Show, Read, Eq, Ord, Data, Generic)
 
-instance FromJSON FetchType 
+instance FromJSON FetchType
 instance ToJSON FetchType
 
 instance PersistField FetchType where
-  toPersistValue v = toPersistValue $ case v of 
+  toPersistValue v = toPersistValue $ case v of
     ReleasesFetch address -> ("releases" :: Text, address)
     CommitsFetch address -> ("commits", address)
   fromPersistValue v = case fromPersistValue v of

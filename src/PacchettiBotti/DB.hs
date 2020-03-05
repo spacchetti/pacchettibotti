@@ -64,11 +64,11 @@ mkDB = do
 
 
 -- | Run a query in a transaction.
--- 
+--
 --  NOTE: Currently, we take a write lock on every action. This is
 --  a bit heavyweight, but it avoids the SQLITE_BUSY errors, e.g.
 --  as seen on <https://github.com/commercialhaskell/stack/issues/4471>
---  We can investigate more elegant solutions in the future, 
+--  We can investigate more elegant solutions in the future,
 --  such as separate read and write actions or introducing
 --  smarter retry logic.
 transact :: HasDB env => Query a -> RIO env a
@@ -84,8 +84,10 @@ insertPackage :: Package -> Query (Maybe (Persist.Entity Package))
 insertPackage = Persist.insertUniqueEntity
 
 
+-- Here we reverse the list, so that older releases are pushed in first,
+-- and they'll have a smaller id. This is so that we can sort Asc to get the latest
 insertReleases :: [Release] -> Query ()
-insertReleases = traverse_ Persist.insertUnique
+insertReleases = traverse_ Persist.insertUnique . List.reverse
 
 
 insertCommits :: [Commit] -> Query ()
@@ -96,39 +98,38 @@ replacePackageSet :: Map Spago.PackageName Spago.Package -> Query ()
 replacePackageSet newPackageSet = do
   -- First we reset all the package set versions that we have stored
   allPackages <- Persist.selectList [ ] [ ]
-  for_ (List.filter (isJust . packageSetVersion . Persist.entityVal) allPackages) 
+  for_ (List.filter (isJust . packageSetVersion . Persist.entityVal) allPackages)
     $ \Persist.Entity{..} -> Persist.update entityKey [ PackageSetVersion =. Nothing ]
   -- Then we go through all the packages in the set and update the version with the new one
-  for_ packageVersions $ \package@Package{..} -> 
+  for_ packageVersions $ \package@Package{..} ->
     Persist.upsert package [ PackageSetVersion =. packageSetVersion ]
   where
     packageVersions :: [Package]
     packageVersions = catMaybes $ uncurry toPackage <$> Map.toList newPackageSet
 
     toPackage _ Spago.Package{ location = Spago.Local{} } = Nothing
-    toPackage packageName Spago.Package{ location = Spago.Remote{ version, repo = Spago.Repo repo }} 
+    toPackage packageName Spago.Package{ location = Spago.Remote{ version, repo = Spago.Repo repo }}
       = case parseAddress repo of
           Left _ -> Nothing
           Right address -> Just $ Package packageName address (Just $ Tag version)
 
 
 getReleases :: Address -> Query [Release]
-getReleases address = fmap Persist.entityVal 
+getReleases address = fmap Persist.entityVal
   <$> Persist.selectList [ ReleaseAddress ==. address ] [ ]
 
+
 getLatestRelease :: Address -> Query (Maybe Tag)
-getLatestRelease address = do
-  releases <- getReleases address
-  -- TODO: ideally we want to store these in the DB as SemVer already
-  let parseTag (Tag tag) = SemVer.parseSemVer tag
-  let renderSV = ("v" <>) . SemVer.renderSV
-  let semverTags = (parseTag . releaseTag) <$> releases
-  pure $ fmap (Tag . renderSV) $ headMay $ List.sortOn Data.Ord.Down $ rights semverTags
+getLatestRelease address =
+  fmap (releaseTag . Persist.entityVal)
+    <$> Persist.selectFirst
+          [ ReleaseAddress ==. address ]
+          [ Persist.Desc ReleaseId, Persist.LimitTo 1 ]
 
 
 getBannedReleases :: Query (Set (Spago.PackageName, Tag))
-getBannedReleases = do 
-  bannedReleases <- fmap Persist.entityVal 
+getBannedReleases = do
+  bannedReleases <- fmap Persist.entityVal
     <$> Persist.selectList [ ReleaseBanned ==. True ] [ ]
   bannedPackages <- for bannedReleases $ \Release{..} -> do
     latestForAddress <- getLatestRelease releaseAddress
