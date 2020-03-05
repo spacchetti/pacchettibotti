@@ -36,7 +36,7 @@ refreshBowerPackages = do
       Retry.recoverAll (Retry.fullJitterBackoff 500000 <> Retry.limitRetries 20) $ \Retry.RetryStatus{..} -> do
         logDebug $ "Retry " <> display rsIterNumber <> ": fetching releases for " <> displayShow address
 
-        !eitherTags <- GitHub.getTags packageName address
+        !eitherTags <- GitHub.getTags address
 
         case eitherTags of
           Left _ -> die [ "Retry " <> display rsIterNumber <> ": failed to fetch releases" ]

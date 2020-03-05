@@ -20,21 +20,12 @@ spagoRepo = GitHub.Address "spacchetti" "spago"
 purescriptRepo :: GitHub.Address
 purescriptRepo = GitHub.Address "purescript" "purescript"
 
-docsSearchPackageName :: PackageName
-docsSearchPackageName = PackageName "__internal__.purescript-docs-search"
-
-spagoPackageName :: PackageName
-spagoPackageName = PackageName "__internal__.spago"
-
-purescriptPackageName :: PackageName
-purescriptPackageName = PackageName "__internal__.purescript"
-
 
 -- | Whenever there's a new release of package-sets, update it in Spago's template
 updatePackageSets :: HasEnv env => RIO env ()
 updatePackageSets =
-  DB.transact (DB.getLatestRelease PackageSets.packageSetsPackageName) >>= \case
-    Nothing -> logError "Did not find a latest release for Spago?"
+  DB.transact (DB.getLatestRelease PackageSets.packageSetsRepo) >>= \case
+    Nothing -> logError "Did not find a latest release for package-sets?"
     Just (Tag newTag) -> do
       let prTitle = "Update to package-sets@" <> newTag
       let prBranchName = "spacchettibotti-" <> newTag
@@ -48,8 +39,8 @@ updatePackageSets =
 -- | Whenever there's a new release of purescript, update the release on our various CI files
 updatePurescriptVersion :: HasEnv env => RIO env ()
 updatePurescriptVersion =
-  DB.transact (DB.getLatestRelease purescriptPackageName) >>= \case
-    Nothing -> logError "Did not find a latest release for Purescript?"
+  DB.transact (DB.getLatestRelease purescriptRepo) >>= \case
+    Nothing -> logError "Did not find a latest release for purescript?"
     Just (Tag newTag) -> do
       let prTitle = "Update to purescript@" <> newTag
       let prBranchName = "spacchettibotti-purs-" <> newTag
@@ -72,7 +63,7 @@ updatePurescriptVersion =
 -- | Whenever there's a new release of the purescript-docs-search, update our version of it
 updateDocsSearch :: HasEnv env => RIO env ()
 updateDocsSearch =
-  DB.transact (DB.getLatestRelease docsSearchPackageName) >>= \case
+  DB.transact (DB.getLatestRelease docsSearchRepo) >>= \case
     Nothing -> logError "Did not find a latest release for purescript-docs-search?"
     Just (Tag newTag) -> do
       let prTitle = "Update to purescript-docs-search@" <> newTag

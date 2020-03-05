@@ -30,24 +30,22 @@ Package json
 
 
 Release json
-  package Spago.PackageName
+  address Address
   tag     Tag
   commit  CommitHash
   banned  Bool
 
-  Primary package tag
-  Foreign Package fk_package package
-  UniqueRelease package tag
+  Primary address tag
+  UniqueRelease address tag
   deriving Show Eq Ord Data
 
 
 Commit json
-  package Spago.PackageName
+  address Address
   commit  CommitHash
 
-  Primary package commit
-  Foreign Package fk_package package
-  UniqueCommit package commit
+  Primary address commit
+  UniqueCommit address commit
   deriving Show Eq Ord Data
 
 

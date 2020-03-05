@@ -112,13 +112,13 @@ replacePackageSet newPackageSet = do
           Right address -> Just $ Package packageName address (Just $ Tag version)
 
 
-getReleases :: Spago.PackageName -> Query [Release]
-getReleases packageName = fmap Persist.entityVal 
-  <$> Persist.selectList [ ReleasePackage ==. packageName ] [ ]
+getReleases :: Address -> Query [Release]
+getReleases address = fmap Persist.entityVal 
+  <$> Persist.selectList [ ReleaseAddress ==. address ] [ ]
 
-getLatestRelease :: Spago.PackageName -> Query (Maybe Tag)
-getLatestRelease package = do
-  releases <- getReleases package
+getLatestRelease :: Address -> Query (Maybe Tag)
+getLatestRelease address = do
+  releases <- getReleases address
   -- TODO: ideally we want to store these in the DB as SemVer already
   let parseTag (Tag tag) = SemVer.parseSemVer tag
   let renderSV = ("v" <>) . SemVer.renderSV
@@ -130,9 +130,16 @@ getBannedReleases :: Query (Set (Spago.PackageName, Tag))
 getBannedReleases = do 
   bannedReleases <- fmap Persist.entityVal 
     <$> Persist.selectList [ ReleaseBanned ==. True ] [ ]
-  pure $ Set.fromList $ toTuple <$> bannedReleases
-  where
-    toTuple Release{..} = (releasePackage, releaseTag)
+  bannedPackages <- for bannedReleases $ \Release{..} -> do
+    latestForAddress <- getLatestRelease releaseAddress
+    case latestForAddress of
+      -- We care about a banned tag only if it's the latest.
+      -- Because if it's not, then there will be a new one that might fix the issue.
+      Just latest | latest == releaseTag -> do
+        maybePackage <- fmap Persist.entityVal <$> Persist.selectFirst [ PackageAddress ==. releaseAddress ] [ ]
+        pure $ ((,releaseTag) . packageName) <$> maybePackage
+      _ -> pure Nothing
+  pure $ Set.fromList $ catMaybes bannedPackages
 
 
 getPackageSetMetadata :: Query ReposMetadataV1
@@ -147,9 +154,9 @@ getPackageSetMetadata = do
       let (Address owner' _repo) = packageAddress
       let owner = GitHub.untagName owner'
       commits <- fmap (commitCommit . Persist.entityVal)
-        <$> Persist.selectList [ CommitPackage ==. packageName ] [ ]
-      releases <- getReleases packageName
-      latest <- getLatestRelease packageName
+        <$> Persist.selectList [ CommitAddress ==. packageAddress ] [ ]
+      releases <- getReleases packageAddress
+      latest <- getLatestRelease packageAddress
       let tags = Map.fromList $ toMetadataTag <$> releases
       pure RepoMetadataV1{..}
 

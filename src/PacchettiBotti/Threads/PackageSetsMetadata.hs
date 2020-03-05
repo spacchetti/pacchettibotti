@@ -48,8 +48,8 @@ fetcher = do
               Left err -> error $ show err
         logDebug $ "Retry " <> display rsIterNumber <> ": fetching tags and commits for " <> displayShow address
 
-        !eitherTags <- GitHub.getTags packageName address
-        !eitherCommits <- GitHub.getCommits packageName address
+        !eitherTags <- GitHub.getTags address
+        !eitherCommits <- GitHub.getCommits address
 
         case (eitherTags, eitherCommits) of
           (Left _, _) -> die [ "Retry " <> display rsIterNumber <> ": failed to fetch tags" ]

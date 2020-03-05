@@ -28,7 +28,6 @@ import qualified PacchettiBotti.DB             as DB
 
 import           PacchettiBotti.Env
 import           PacchettiBotti.DB              ( Address(..) )
-import           Spago.Types
 import           Spago.GlobalCache              ( CommitHash(..)
                                                 , Tag(..)
                                                 )
@@ -53,10 +52,9 @@ getLatestRelease address@(Address owner repo) = do
 
 getTags
   :: HasGitHub env
-  => PackageName
-  -> Address
+  => Address
   -> RIO env (Either GitHub.Error [DB.Release])
-getTags packageName address@(Address owner repo) = do
+getTags address@(Address owner repo) = do
   logInfo $ "Getting tags for " <> displayShow address
   token <- view githubTokenL
   res <- liftIO $ GitHub.github token $ GitHub.tagsForR owner repo GitHub.FetchAll
@@ -65,17 +63,16 @@ getTags packageName address@(Address owner repo) = do
     mkRelease GitHub.Tag{..} = DB.Release{..}
       where
         releaseTag = Tag tagName
-        releasePackage = packageName
+        releaseAddress = address
         releaseBanned = False
         releaseCommit = CommitHash $ GitHub.branchCommitSha tagCommit
 
 
 getCommits
   :: HasGitHub env
-  => PackageName
-  -> Address
+  => Address
   -> RIO env (Either GitHub.Error [DB.Commit])
-getCommits packageName address@(Address owner repo) = do
+getCommits address@(Address owner repo) = do
   logInfo $ "Getting commits for " <> displayShow address
   token <- view githubTokenL
   res <- liftIO $ GitHub.github token $ GitHub.commitsForR owner repo GitHub.FetchAll
@@ -84,7 +81,7 @@ getCommits packageName address@(Address owner repo) = do
     mkCommit GitHub.Commit{..} = DB.Commit{..}
       where
         commitCommit = CommitHash $ GitHub.untagName commitSha
-        commitPackage = packageName
+        commitAddress = address
 
 
 getPullRequestForUser

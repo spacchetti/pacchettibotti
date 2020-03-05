@@ -71,11 +71,11 @@ handleMessage = \case
       $ Registry.refreshBowerPackages
   HourlyUpdate -> do
     spawnThread "releaseCheckPureScript"
-      $ Common.checkLatestRelease Spago.purescriptPackageName Spago.purescriptRepo
+      $ Common.checkLatestRelease Spago.purescriptRepo
     spawnThread "releaseCheckDocsSearch"
-      $ Common.checkLatestRelease Spago.docsSearchPackageName Spago.docsSearchRepo
+      $ Common.checkLatestRelease Spago.docsSearchRepo
     spawnThread "releaseCheckPackageSets"
-      $ Common.checkLatestRelease PackageSets.packageSetsPackageName PackageSets.packageSetsRepo
+      $ Common.checkLatestRelease PackageSets.packageSetsRepo
     spawnThread "metadataFetcher" Metadata.fetcher
 
   NewPureScriptRelease ->
