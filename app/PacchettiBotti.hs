@@ -67,15 +67,11 @@ main = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle -> do
 handleMessage :: HasEnv env => Message -> RIO env ()
 handleMessage = \case
   DailyUpdate ->
-    spawnThread "Bower packages daily update"
-      $ Registry.refreshBowerPackages
+    spawnThread "Bower packages daily update" $ Registry.refreshBowerPackages
   HourlyUpdate -> do
-    spawnThread "releaseCheckPureScript"
-      $ Common.checkLatestRelease Spago.purescriptRepo
-    spawnThread "releaseCheckDocsSearch"
-      $ Common.checkLatestRelease Spago.docsSearchRepo
-    spawnThread "releaseCheckPackageSets"
-      $ Common.checkLatestRelease PackageSets.packageSetsRepo
+    spawnThread "releaseCheckPureScript" $ Common.checkLatestRelease Spago.purescriptRepo
+    spawnThread "releaseCheckDocsSearch" $ Common.checkLatestRelease Spago.docsSearchRepo
+    spawnThread "releaseCheckPackageSets" $ Common.checkLatestRelease PackageSets.packageSetsRepo
     spawnThread "metadataFetcher" Metadata.fetcher
 
   NewPureScriptRelease ->
@@ -84,12 +80,12 @@ handleMessage = \case
 
   NewPackageSetsRelease ->
     spawnThread "spagoUpdatePackageSets" Spago.updatePackageSets
-    
+
   NewDocsSearchRelease ->
     spawnThread "spagoUpdateDocsSearch" Spago.updateDocsSearch
 
-  NewVerification result ->
-    spawnThread "packageSetsCommenter" $ PackageSets.commenter result
+  NewVerification cmd result ->
+    spawnThread "packageSetsCommenter" $ PackageSets.commenter cmd result
 
   NewMetadata -> do
     spawnThread "packageSetsUpdater" PackageSets.updater

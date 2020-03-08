@@ -46,21 +46,19 @@ fetcher = do
         let address@DB.Address{..} = case DB.parseAddress repoUrl of
               Right a -> a
               Left err -> error $ show err
-        logDebug $ "Retry " <> display rsIterNumber <> ": fetching tags and commits for " <> displayShow address
+        let dAddress = displayShow address
+        logDebug $ "Retry " <> display rsIterNumber <> ": fetching tags and commits for " <> dAddress
+        DB.transact $ do
+          let package = DB.Package packageName address Nothing
+          void $ DB.insertPackage package
 
         !eitherTags <- GitHub.getTags address
         !eitherCommits <- GitHub.getCommits address
 
         case (eitherTags, eitherCommits) of
-          (Left _, _) -> die [ "Retry " <> display rsIterNumber <> ": failed to fetch tags" ]
-          (_, Left _) -> die [ "Retry " <> display rsIterNumber <> ": failed to fetch commits" ]
-          (Right tags, Right commits) -> do
-            logInfo $ "Got tags and commits for " <> displayShow address
-            DB.transact $ do
-              let package = DB.Package packageName address Nothing
-              void $ DB.insertPackage package
-              DB.insertReleases tags
-              DB.insertCommits commits
+          (Left _, _) -> die [ "Retry " <> display rsIterNumber <> ": failed to fetch tags for " <> dAddress ]
+          (_, Left _) -> die [ "Retry " <> display rsIterNumber <> ": failed to fetch commits for " <> dAddress ]
+          (Right _tags, Right _commits) -> logInfo $ "Got tags and commits for " <> dAddress
 
 
     -- | Tries to read in a PackageSet from GitHub, master branch

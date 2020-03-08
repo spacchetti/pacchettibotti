@@ -67,10 +67,10 @@ instance ToJSON FetchType
 instance PersistField FetchType where
   toPersistValue v = toPersistValue $ case v of
     ReleasesFetch address -> ("releases" :: Text, address)
-    CommitsFetch address -> ("commits", address)
+    CommitsFetch address -> ("commits" :: Text, address)
   fromPersistValue v = case fromPersistValue v of
     Right ("releases" :: Text, address) -> Right $ ReleasesFetch address
-    Right ("commits", address) -> Right $ CommitsFetch address
+    Right ("commits" :: Text, address) -> Right $ CommitsFetch address
     Right other -> Left $ "Got other stuff when decoding FetchType: " <> tshow other
     Left err -> Left err
 

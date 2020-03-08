@@ -14,13 +14,13 @@ import qualified PacchettiBotti.Threads.PackageSets
 checkLatestRelease :: HasEnv env => GitHub.Address -> RIO env ()
 checkLatestRelease address = GitHub.getTags address >>= \case
   Left err -> logWarn $ "Could not check the latest release for " <> displayShow address <> ". Error: " <> displayShow err
-  Right (latest@DB.Release{..}:_) -> do
+  Right tags@(latest@DB.Release{..}:_) -> do
     DB.transact (DB.getLatestRelease address) >>= \case
       -- We don't do anything if we have a release saved and it's the current one
       Just latestCachedTag | releaseTag == latestCachedTag -> pure ()
       _ -> do
         logInfo $ "Found latest release for " <> displayShow address <> ": " <> displayShow latest
-        DB.transact $ DB.insertReleases [latest]
+        DB.transact $ DB.insertReleases tags
         case address of
           a | a == PackageSets.packageSetsRepo -> writeBus NewPackageSetsRelease
           a | a == Spago.purescriptRepo        -> writeBus NewPureScriptRelease

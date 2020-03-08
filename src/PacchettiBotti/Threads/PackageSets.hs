@@ -29,22 +29,22 @@ packageSetsPackageName = PackageName "__internal__.package-sets"
 
 -- | Watch out for the result of a `spago verify-set` command, and comment appropriately
 --   on the PR thread (if any)
-commenter :: HasEnv env => VerificationResult -> RIO env ()
-commenter result = do
+commenter :: HasEnv env => Text -> VerificationResult -> RIO env ()
+commenter commandRun result = do
   maybePR <- GitHub.getPullRequestForUser "spacchettibotti" packageSetsRepo
 
   case maybePR of
     Nothing -> do
       logWarn "Could not find an open PR, waiting 5 mins.."
       liftIO $ Concurrent.threadDelay (5 * 60 * 1000000)
-      writeBus (NewVerification result)
+      writeBus (NewVerification commandRun result)
     Just GitHub.PullRequest{..} -> do
       let commentBody = case result of
-            (ExitSuccess, _, _) -> "Result of `spago verify-set` in a clean project: **success** 🎉"
+            (ExitSuccess, _, _) -> "Result of `" <> commandRun <> "` in a clean project: **success** 🎉"
             (_, out, err) -> Text.unlines
-              [ "Result of `spago verify-set` in a clean project: **failure** 😱"
+              [ "Result of `" <> commandRun <> "` in a clean project: **failure** 😱"
               , ""
-              , "<details><summary>Output of `spago verify-set`</summary><p>"
+              , "<details><summary>Output of `" <> commandRun <> "`</summary><p>"
               , ""
               , "```"
               , out
@@ -117,15 +117,23 @@ updater = do
 
   let patchVersions :: (HasLogFunc env, HasBus env) => GHC.IO.FilePath -> RIO env ()
       patchVersions path = do
-        for_ (Map.toList newVersionsWithBanned) $ \(packageName, (tag, owner)) -> do
+        let packages = Map.toList newVersionsWithBanned
+        for_ packages $ \(packageName, (tag, owner)) -> do
           logInfo $ "Patching version for " <> displayShow packageName
           Run.withAST (Text.pack $ path </> "src" </> "groups" </> Text.unpack (Text.toLower owner) <> ".dhall")
             $ updateVersion packageName tag
 
-        logInfo "Verifying new set. This might take a LONG while.."
-        result <- Run.runWithCwd path "cd src; spago init; spago verify-set"
-        logInfo "Verified packages, spamming the channel with the result.."
-        writeBus $ NewVerification result
+        -- If we don't have anything to commit, then we actually skip verification
+        (exitCode, _, _) <- Run.runWithCwd path "git diff --exit-code"
+        case exitCode of
+          ExitSuccess -> logInfo "Tried refreshing package-sets' Dhall, but got nothing new to commit"
+          _ -> do
+            logInfo "Verifying new set. This might take a LONG while.."
+            let verifyCmd (PackageName package, _) = "spago -C verify " <> package
+            let cmd = "cd src && " <> Text.intercalate " && " (map verifyCmd packages)
+            result <- Run.runWithCwd path cmd
+            logInfo "Verified packages, spamming the channel with the result.."
+            writeBus $ NewVerification cmd result
 
   let commands =
         [ "make"
@@ -148,8 +156,10 @@ updater = do
             prTitle = "Updates " <> today
             prAddress = packageSetsRepo
             prBody = mkBody newVersions banned
+        logInfo $ "No PR found, opening " <> displayShow prTitle
         Run.runAndOpenPR GitHub.SimplePR{..} patchVersions commands
       Just GitHub.PullRequest{ pullRequestHead = GitHub.PullRequestCommit{..}, ..} -> do
+        logInfo $ "Found a PR open, reusing " <> displayShow pullRequestTitle
         -- A PR is there and there might be updates to the banned packages, so we
         -- try to update the banlist
         commentsForPR <- GitHub.getCommentsOnPR packageSetsRepo pullRequestNumber
@@ -157,27 +167,9 @@ updater = do
         let newVersionsWithBanned' = computePackagesToUpdate newMetadata newBanned
         let newVersions' = Map.filterWithKey removeBannedOverrides newVersionsWithBanned'
 
-        -- Since a PR is already there we might have to skip verification,
-        -- because we might have verified that commit already
-        -- Since we leave a comment every time we verify, we can check if there
-        -- are any new commits since the last comment
-        -- (this means that any comment will retrigger a verification)
-        let shouldVerifyAgain path = do
-              lastCommitTime <- Run.getLatestCommitTime path
-              let lastCommentTime = case lastMay commentsForPR of
-                    Nothing -> pullRequestCreatedAt
-                    Just GitHub.IssueComment{..} -> issueCommentCreatedAt
-              pure $ or
-                -- If the banned packages changed
-                [ newVersions /= newVersions'
-                -- Or the latest commit to our branch is newer than our latest comment on the PR
-                , Time.diffUTCTime lastCommitTime lastCommentTime > 0
-                ]
-        let patchVersions' path = shouldVerifyAgain path >>= \case
-              False -> logInfo "Skipping verification as there's nothing new under the sun.."
-              True -> do
-                patchVersions path
-                GitHub.updatePullRequestBody packageSetsRepo pullRequestNumber $ mkBody newVersions' newBanned
+        let patchVersions' path = do
+              patchVersions path
+              GitHub.updatePullRequestBody packageSetsRepo pullRequestNumber $ mkBody newVersions' newBanned
 
         Run.runAndPushBranch pullRequestCommitRef packageSetsRepo pullRequestTitle patchVersions' commands
   where

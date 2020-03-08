@@ -64,5 +64,5 @@ data Message
   | NewPackageSet
   | NewMetadata
   | NewBowerRefresh
-  | NewVerification !VerificationResult
+  | NewVerification !Text !VerificationResult
   deriving (Show)

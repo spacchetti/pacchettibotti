@@ -30,19 +30,18 @@ refreshBowerPackages = do
 
   where
     fetchRepoMetadata
-      :: (HasGitHub env, HasDB env)
+      :: (HasEnv env)
       => (PackageName, DB.Address) -> RIO env ()
     fetchRepoMetadata (packageName, address) =
       Retry.recoverAll (Retry.fullJitterBackoff 500000 <> Retry.limitRetries 20) $ \Retry.RetryStatus{..} -> do
-        logDebug $ "Retry " <> display rsIterNumber <> ": fetching releases for " <> displayShow address
+        let dAddress = displayShow address
+        logDebug $ "Retry " <> display rsIterNumber <> ": fetching releases for " <> dAddress
+        DB.transact $ do
+          let package = DB.Package packageName address Nothing
+          void $ DB.insertPackage package
 
         !eitherTags <- GitHub.getTags address
 
         case eitherTags of
-          Left _ -> die [ "Retry " <> display rsIterNumber <> ": failed to fetch releases" ]
-          Right tags -> do
-            logInfo $ "YAY tags " <> displayShow address
-            DB.transact $ do
-              let package = DB.Package packageName address Nothing
-              void $ DB.insertPackage package
-              DB.insertReleases tags
+          Left _ -> die [ "Retry " <> display rsIterNumber <> ": failed to fetch releases for " <> dAddress ]
+          Right _tags -> logInfo $ "YAY tags " <> dAddress

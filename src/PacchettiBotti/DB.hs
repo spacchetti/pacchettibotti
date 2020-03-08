@@ -5,14 +5,18 @@ module PacchettiBotti.DB
   , Handle
   , Query
   , HasDB(..)
+  , getReleases
   , getLatestRelease
   , getBannedReleases
+  , getCommits
   , getPackageSet
   , getPackageSetMetadata
   , insertPackage
   , insertReleases
   , insertCommits
+  , insertFetchInfo
   , replacePackageSet
+  , shouldFetchHappen
   , Release(..)
   ) where
 
@@ -21,16 +25,17 @@ import           Spago.Prelude           hiding ( Handle )
 import qualified Database.Persist.Sqlite       as Persist
 import qualified Data.Map.Strict               as Map
 import qualified Data.List                     as List
-import qualified Data.Ord
 import qualified Spago.Types                   as Spago
 import qualified GitHub
-import qualified Data.SemVer                   as SemVer
 import qualified Data.Set as Set
 
 import           Database.Persist.Sqlite        ( (=.)
                                                 , (==.)
+                                                , (>=.)
                                                 )
 import           PacchettiBotti.DB.Schema
+import Data.Time (UTCTime)
+import qualified Data.Time as Time
 import           System.FileLock                ( withFileLock
                                                 , SharedExclusive(..)
                                                 )
@@ -94,6 +99,10 @@ insertCommits :: [Commit] -> Query ()
 insertCommits = traverse_ Persist.insertUnique
 
 
+insertFetchInfo :: Fetch -> Query ()
+insertFetchInfo fetch@Fetch{..} = void $ Persist.upsert fetch [ FetchTime =. fetchTime ]
+
+
 replacePackageSet :: Map Spago.PackageName Spago.Package -> Query ()
 replacePackageSet newPackageSet = do
   -- First we reset all the package set versions that we have stored
@@ -114,9 +123,20 @@ replacePackageSet newPackageSet = do
           Right address -> Just $ Package packageName address (Just $ Tag version)
 
 
+shouldFetchHappen :: FetchType -> UTCTime -> Query Bool
+shouldFetchHappen fetchType now = do
+  maybeLastFetch <- fmap Persist.entityVal
+    <$> Persist.selectFirst
+          [ FetchType ==. fetchType, FetchTime >=. threshold ]
+          [ Persist.Desc FetchTime, Persist.LimitTo 1 ]
+  pure $ isNothing maybeLastFetch
+  where
+    threshold = Time.addUTCTime (- (Time.nominalDay / 48)) now
+
+
 getReleases :: Address -> Query [Release]
 getReleases address = fmap Persist.entityVal
-  <$> Persist.selectList [ ReleaseAddress ==. address ] [ ]
+  <$> Persist.selectList [ ReleaseAddress ==. address ] [ Persist.Desc ReleaseId ]
 
 
 getLatestRelease :: Address -> Query (Maybe Tag)
@@ -143,6 +163,11 @@ getBannedReleases = do
   pure $ Set.fromList $ catMaybes bannedPackages
 
 
+getCommits :: Address -> Query [Commit]
+getCommits address = fmap Persist.entityVal
+  <$> Persist.selectList [ CommitAddress ==. address ] [ ]
+
+
 getPackageSetMetadata :: Query ReposMetadataV1
 getPackageSetMetadata = do
   packageSetMap <- getPackageSet
@@ -154,8 +179,7 @@ getPackageSetMetadata = do
     mkRepoMetadata Package{..} = do
       let (Address owner' _repo) = packageAddress
       let owner = GitHub.untagName owner'
-      commits <- fmap (commitCommit . Persist.entityVal)
-        <$> Persist.selectList [ CommitAddress ==. packageAddress ] [ ]
+      commits <- fmap commitCommit <$> getCommits packageAddress
       releases <- getReleases packageAddress
       latest <- getLatestRelease packageAddress
       let tags = Map.fromList $ toMetadataTag <$> releases

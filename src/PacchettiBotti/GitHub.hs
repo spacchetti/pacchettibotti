@@ -1,7 +1,6 @@
 module PacchettiBotti.GitHub
   ( Address(..)
   , SimplePR(..)
-  , getLatestRelease
   , getTags
   , getCommits
   , getPullRequestForUser
@@ -19,18 +18,15 @@ module PacchettiBotti.GitHub
   , GitHub.mkName
   ) where
 
-import           Spago.Prelude           hiding ( Env )
+import PacchettiBotti.Prelude
 
 import qualified Data.Vector                   as Vector
 import qualified GitHub
+import qualified Data.Time as Time
 
 import qualified PacchettiBotti.DB             as DB
 
-import           PacchettiBotti.Env
 import           PacchettiBotti.DB              ( Address(..) )
-import           Spago.GlobalCache              ( CommitHash(..)
-                                                , Tag(..)
-                                                )
 
 
 data SimplePR = SimplePR
@@ -40,25 +36,28 @@ data SimplePR = SimplePR
   , prBody       :: !Text
   }
 
-getLatestRelease
-  :: HasGitHub env
-  => Address
-  -> RIO env (Either GitHub.Error GitHub.Release)
-getLatestRelease address@(Address owner repo) = do
-  logInfo $ "Getting latest release for " <> displayShow address
-  token <- view githubTokenL
-  liftIO $ GitHub.github token $ GitHub.latestReleaseR owner repo
-
 
 getTags
-  :: HasGitHub env
+  :: HasEnv env
   => Address
   -> RIO env (Either GitHub.Error [DB.Release])
 getTags address@(Address owner repo) = do
-  logInfo $ "Getting tags for " <> displayShow address
-  token <- view githubTokenL
-  res <- liftIO $ GitHub.github token $ GitHub.tagsForR owner repo GitHub.FetchAll
-  pure $ (Vector.toList . fmap mkRelease) <$> res
+  let fetchType = DB.ReleasesFetch address
+  now <- liftIO Time.getCurrentTime
+  shouldFetch <- DB.transact $ DB.shouldFetchHappen fetchType now
+  if shouldFetch
+  then do
+    logInfo $ "Getting tags for " <> displayShow address
+    token <- view githubTokenL
+    res <- liftIO $ GitHub.github token $ GitHub.tagsForR owner repo GitHub.FetchAll
+    for (Vector.toList . fmap mkRelease <$> res) $ \tags -> do
+      DB.transact $ do
+        DB.insertReleases tags
+        DB.insertFetchInfo (DB.Fetch fetchType now)
+      pure tags
+  else do
+    logDebug $ "Using cache for tags of repo " <> displayShow address
+    Right <$> DB.transact (DB.getReleases address)
   where
     mkRelease GitHub.Tag{..} = DB.Release{..}
       where
@@ -69,14 +68,26 @@ getTags address@(Address owner repo) = do
 
 
 getCommits
-  :: HasGitHub env
+  :: HasEnv env
   => Address
   -> RIO env (Either GitHub.Error [DB.Commit])
 getCommits address@(Address owner repo) = do
-  logInfo $ "Getting commits for " <> displayShow address
-  token <- view githubTokenL
-  res <- liftIO $ GitHub.github token $ GitHub.commitsForR owner repo GitHub.FetchAll
-  pure $ (Vector.toList . fmap mkCommit) <$> res
+  let fetchType = DB.CommitsFetch address
+  now <- liftIO Time.getCurrentTime
+  shouldFetch <- DB.transact $ DB.shouldFetchHappen fetchType now
+  if shouldFetch
+  then do
+    logInfo $ "Getting commits for " <> displayShow address
+    token <- view githubTokenL
+    res <- liftIO $ GitHub.github token $ GitHub.commitsForR owner repo GitHub.FetchAll
+    for (Vector.toList . fmap mkCommit <$> res) $ \commits -> do
+      DB.transact $ do
+        DB.insertCommits commits
+        DB.insertFetchInfo (DB.Fetch fetchType now)
+      pure commits
+  else do
+    logDebug $ "Using cache for commits of repo " <> displayShow address
+    Right <$> DB.transact (DB.getCommits address)
   where
     mkCommit GitHub.Commit{..} = DB.Commit{..}
       where
