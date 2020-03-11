@@ -52,8 +52,8 @@ fetcher = do
           let package = DB.Package packageName address Nothing
           void $ DB.insertPackage package
 
-        !eitherTags <- GitHub.getTags address
-        !eitherCommits <- GitHub.getCommits address
+        !eitherTags <- GitHub.fetchAndSaveTags address
+        !eitherCommits <- GitHub.fetchAndSaveCommits address
 
         case (eitherTags, eitherCommits) of
           (Left _, _) -> die [ "Retry " <> display rsIterNumber <> ": failed to fetch tags for " <> dAddress ]

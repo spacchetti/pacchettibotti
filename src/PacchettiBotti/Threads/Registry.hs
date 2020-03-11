@@ -40,7 +40,7 @@ refreshBowerPackages = do
           let package = DB.Package packageName address Nothing
           void $ DB.insertPackage package
 
-        !eitherTags <- GitHub.getTags address
+        !eitherTags <- GitHub.fetchAndSaveTags address
 
         case eitherTags of
           Left _ -> die [ "Retry " <> display rsIterNumber <> ": failed to fetch releases for " <> dAddress ]

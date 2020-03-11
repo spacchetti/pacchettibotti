@@ -1,8 +1,8 @@
 module PacchettiBotti.GitHub
   ( Address(..)
   , SimplePR(..)
-  , getTags
-  , getCommits
+  , fetchAndSaveTags
+  , fetchAndSaveCommits
   , getPullRequestForUser
   , getCommentsOnPR
   , updatePullRequestBody
@@ -37,11 +37,11 @@ data SimplePR = SimplePR
   }
 
 
-getTags
+fetchAndSaveTags
   :: HasEnv env
   => Address
   -> RIO env (Either GitHub.Error [DB.Release])
-getTags address@(Address owner repo) = do
+fetchAndSaveTags address@(Address owner repo) = do
   let fetchType = DB.ReleasesFetch address
   now <- liftIO Time.getCurrentTime
   shouldFetch <- DB.transact $ DB.shouldFetchHappen fetchType now
@@ -67,11 +67,11 @@ getTags address@(Address owner repo) = do
         releaseCommit = CommitHash $ GitHub.branchCommitSha tagCommit
 
 
-getCommits
+fetchAndSaveCommits
   :: HasEnv env
   => Address
   -> RIO env (Either GitHub.Error [DB.Commit])
-getCommits address@(Address owner repo) = do
+fetchAndSaveCommits address@(Address owner repo) = do
   let fetchType = DB.CommitsFetch address
   now <- liftIO Time.getCurrentTime
   shouldFetch <- DB.transact $ DB.shouldFetchHappen fetchType now
