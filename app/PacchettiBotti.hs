@@ -4,13 +4,7 @@ import           PacchettiBotti.Prelude
 
 import qualified Control.Concurrent            as Concurrent
 import qualified Control.Concurrent.STM.TChan  as Chan
-import qualified Data.Text                     as Text
-import qualified Data.Text.Encoding            as Encoding
-import qualified GHC.IO.Encoding
-import qualified System.Environment            as Env
 
-import qualified PacchettiBotti.DB             as DB
-import qualified PacchettiBotti.GitHub         as GitHub
 import qualified PacchettiBotti.Threads.Generic
                                                as Common
 import qualified PacchettiBotti.Threads.Spago  as Spago
@@ -23,45 +17,16 @@ import qualified PacchettiBotti.Threads.PackageSetsMetadata
 
 
 main :: IO ()
-main = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle -> do
-  logStderr <- setLogUseLoc False <$> logOptionsHandle stderr True
-  logFile <- setLogUseLoc False <$> logOptionsHandle configHandle True
+main = withEnv $ do
+  -- To kickstart updates we just need to send "heartbeats" on the bus every once in a while
+  -- Threads will be listening to this, do stuff, post things on the bus which we handle
+  -- here in the main thread
+  spawnThread "Hourly Heartbeat" hourlyHeartbeat
+  spawnThread "Daily Heartbeat" dailyHeartbeat
 
-  withLogFunc logStderr $ \logFuncConsole -> withLogFunc logFile $ \logFuncFile ->
-    let envLogFunc = logFuncConsole <> logFuncFile
-    in runRIO envLogFunc $ do
-    -- We always want to run in UTF8 anyways
-    liftIO $ GHC.IO.Encoding.setLocaleEncoding GHC.IO.Encoding.utf8
-    -- Stop `git` from asking for input, not gonna happen
-    -- We just fail instead. Source:
-    -- https://serverfault.com/questions/544156
-    liftIO $ Env.setEnv "GIT_TERMINAL_PROMPT" "0"
-
-    -- Read GitHub Auth Token
-    logInfo "Reading GitHub token.."
-    envGithubToken <- liftIO $ GitHub.OAuth . Encoding.encodeUtf8 . Text.pack
-      <$> Env.getEnv "SPACCHETTIBOTTI_TOKEN"
-
-    -- Prepare data folder that will contain the temp copies of the repos
-    logInfo "Creating 'data' folder"
-    mktree "data"
-
-    envBus <- liftIO Chan.newBroadcastTChanIO
-
-    logInfo "Migrating DB.."
-    envDB <- DB.mkDB
-
-    let env = Env{..}
-
-    runRIO env $ do
-      -- To kickstart updates we just need to send "heartbeats" on the bus every once in a while
-      -- Threads will be listening to this, do stuff, post things on the bus which we handle
-      -- here in the main thread
-      spawnThread "Hourly Heartbeat" hourlyHeartbeat
-      spawnThread "Daily Heartbeat" dailyHeartbeat
-
-      pullChan <- atomically $ Chan.dupTChan envBus
-      forever $ atomically (Chan.readTChan pullChan) >>= handleMessage
+  envBus <- view busL
+  pullChan <- atomically $ Chan.dupTChan envBus
+  forever $ atomically (Chan.readTChan pullChan) >>= handleMessage
 
 
 handleMessage :: HasEnv env => Message -> RIO env ()
