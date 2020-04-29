@@ -88,14 +88,12 @@ withEnv action = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle 
     -- https://serverfault.com/questions/544156
     liftIO $ Env.setEnv "GIT_TERMINAL_PROMPT" "0"
 
-    -- Read GitHub Auth Token
     logInfo "Reading GitHub token.."
     envGithubToken <- liftIO $ GitHub.OAuth . Encoding.encodeUtf8 . Text.pack
       <$> Env.getEnv "PACCHETTIBOTTI_GITHUB_TOKEN"
 
-    -- Read Heartbeat.io token
-    logInfo "Reading heartbeat.io token"
-    envHeartbeatToken <- liftIO $ Env.getEnv "PACCHETTIBOTTI_HEARTBEAT_TOKEN"
+    logInfo "Reading healthchecks.io token"
+    envHeartbeatToken <- liftIO $ Env.getEnv "PACCHETTIBOTTI_HEALTHCHECKSIO_TOKEN"
 
     -- Prepare data folder that will contain the temp copies of the repos
     logInfo "Creating 'data' folder"
