@@ -16,7 +16,7 @@ import qualified Data.Text.Encoding            as Encoding
 data Env = Env
   { envLogFunc :: !LogFunc
   , envGithubToken :: !GitHub.Auth
-  , envHeartbeatToken :: !String
+  , envHealthchecksToken :: !String
   , envDB :: !DB.Handle
   -- | Main message bus. It is write-only so you should use `spawnThread` to read from it
   , envBus :: !(Chan.TChan Message)
@@ -93,7 +93,7 @@ withEnv action = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle 
       <$> Env.getEnv "PACCHETTIBOTTI_GITHUB_TOKEN"
 
     logInfo "Reading healthchecks.io token"
-    envHeartbeatToken <- liftIO $ Env.getEnv "PACCHETTIBOTTI_HEALTHCHECKSIO_TOKEN"
+    envHealthchecksToken <- liftIO $ Env.getEnv "PACCHETTIBOTTI_HEALTHCHECKSIO_TOKEN"
 
     -- Prepare data folder that will contain the temp copies of the repos
     logInfo "Creating 'data' folder"

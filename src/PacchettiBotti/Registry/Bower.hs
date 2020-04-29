@@ -30,12 +30,14 @@ importFromBower = withEnv $ do
   -- first of all we get a listing of all the bower packages
   let packages = Map.keys bowerPackages
   for_ packages $ \packageName@(PackageName package) -> do
+    -- TODO: clone the repo instead
     let packageDir = "../registry/packages/" <> package
     -- first we check if we have the directory. If not, we make one
     whenM (not <$> testdir (pathFromText packageDir)) $ do
       logInfo $ "Directory did not exist for package " <> display package
       mktree $ pathFromText packageDir
     -- then for every package there, we list all the files, which are the versions
+    -- TODO: exclude the index from the listing
     versions <- Directory.listDirectory $ Text.unpack packageDir
     -- then we query the DB for all releases for that package
     releases <- DB.transact $ DB.getReleasesForPackage packageName
@@ -50,6 +52,7 @@ importFromBower = withEnv $ do
     unless (List.null missingFiles) $ do
       logInfo $ "Found " <> display (List.length missingFiles) <> " releases that were on Bower but not registered"
       for_ missingFiles $ \DB.Release{..} -> do
+        -- TODO push these on the bus at some point? We'll have to upload packages sooner or later
         let (DB.Address owner repo) = releaseAddress
         let (Tag tag) = releaseTag
         unless (Set.member (releaseAddress, releaseTag) toSkip) $ do
@@ -57,6 +60,8 @@ importFromBower = withEnv $ do
                 <> GitHub.untagName owner <> "/"
                 <> GitHub.untagName repo <> "/"
                 <> tag <> "/bower.json"
+          -- TODO: download the package.json too?
+          -- See https://github.com/purescript/registry/issues/20
           let packageInfo = displayShow releaseAddress <> "@" <> display tag
           let versionPath = packageDir <> "/" <> tag <> ".dhall"
           result <- try $ do
@@ -93,10 +98,7 @@ selfContainedDependencies PackageMeta{..} = do
 
 -- | Releases that should be skipped because they are somehow broken for now
 toSkip :: Set (GitHub.Address, Tag)
-toSkip = Set.fromList
-  [ -- (DB.Address "menelaos" "purescript-b64", Tag "v0.0.6")
-  -- , (DB.Address "jutaro" "purescript-STSequence", Tag "v0.0.1")
-  ]
+toSkip = Set.fromList []
 
 
 bowerPackages :: Map PackageName DB.Address

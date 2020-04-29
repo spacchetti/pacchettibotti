@@ -39,9 +39,9 @@ handleMessage = \case
     spawnThread "releaseCheckDocsSearch" $ Common.checkLatestRelease Spago.docsSearchRepo
     spawnThread "releaseCheckPackageSets" $ Common.checkLatestRelease PackageSets.packageSetsRepo
     spawnThread "metadataFetcher" Metadata.fetcher
-    -- we curl this Heartbeat.io link every hour, otherwise Fabrizio gets emails :)
-    Env{ envHeartbeatToken } <- view envL
-    heartbeatUrl <- Http.parseRequest $ "https://hc-ping.com/" <> envHeartbeatToken
+    -- we curl this Healthchecks.io link every hour, otherwise Fabrizio gets emails :)
+    Env{ envHealthchecksToken } <- view envL
+    heartbeatUrl <- Http.parseRequest $ "https://hc-ping.com/" <> envHealthchecksToken
     void $ Http.httpBS heartbeatUrl
 
   NewPureScriptRelease ->
