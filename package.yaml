@@ -111,6 +111,7 @@ executables:
     dependencies:
     - base >= 4.7 && < 5
     - containers
+    - http-conduit
     - pacchettibotti
     - stm
     - text < 1.3

@@ -4,3 +4,4 @@
 *.cabal
 db.sqlite*
 data
+.vscode

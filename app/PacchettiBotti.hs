@@ -4,6 +4,7 @@ import           PacchettiBotti.Prelude
 
 import qualified Control.Concurrent            as Concurrent
 import qualified Control.Concurrent.STM.TChan  as Chan
+import qualified Network.HTTP.Simple           as Http
 
 import qualified PacchettiBotti.Threads.Generic
                                                as Common
@@ -38,6 +39,10 @@ handleMessage = \case
     spawnThread "releaseCheckDocsSearch" $ Common.checkLatestRelease Spago.docsSearchRepo
     spawnThread "releaseCheckPackageSets" $ Common.checkLatestRelease PackageSets.packageSetsRepo
     spawnThread "metadataFetcher" Metadata.fetcher
+    -- we curl this Heartbeat.io link every hour, otherwise Fabrizio gets emails :)
+    Env{ envHeartbeatToken } <- view envL
+    heartbeatUrl <- Http.parseRequest $ "https://hc-ping.com/" <> envHeartbeatToken
+    void $ Http.httpBS heartbeatUrl
 
   NewPureScriptRelease ->
     spawnThread "spagoUpdatePurescript" Spago.updatePurescriptVersion
