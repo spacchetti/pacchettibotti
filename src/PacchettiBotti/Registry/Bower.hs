@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedLists #-}
 module PacchettiBotti.Registry.Bower where
 
 import PacchettiBotti.Prelude
@@ -38,6 +39,7 @@ importFromBower = withEnv $ do
     versions <- Directory.listDirectory $ Text.unpack packageDir
     -- then we query the DB for all releases for that package
     releases <- DB.transact $ DB.getReleasesForPackage packageName
+    -- TODO: write releases index
     -- are there any releases that we don't have the file for?
     let notInFiles DB.Release{..} = not $ Set.member releaseTag $ Set.fromList $ Tag . Text.pack <$> versions
     let missingFiles = List.filter notInFiles releases
@@ -56,7 +58,7 @@ importFromBower = withEnv $ do
                 <> GitHub.untagName repo <> "/"
                 <> tag <> "/bower.json"
           let packageInfo = displayShow releaseAddress <> "@" <> display tag
-          let versionPath = packageDir <> "/" <> tag
+          let versionPath = packageDir <> "/" <> tag <> ".dhall"
           result <- try $ do
             logInfo $ "Fetching Bower info for " <> packageInfo
             req <- Http.parseRequest $ Text.unpack url
@@ -65,7 +67,7 @@ importFromBower = withEnv $ do
             unlessM (selfContainedDependencies packageMeta) $ do
               error "Dependencies not self-contained on purescript packages!"
             logInfo $ "Writing package definition for " <> packageInfo
-            writeTextFile versionPath (toDhallSource packageMeta)
+            writeTextFile versionPath (toDhallSource packageMeta tag)
             Dhall.format versionPath
 
           case result of
@@ -99,16 +101,17 @@ toSkip = Set.fromList
 
 bowerPackages :: Map PackageName DB.Address
 bowerPackages
-  = snd $ Map.mapEither DB.parseAddress
+  = (flip Map.restrictKeys) [PackageName "aff", PackageName "prelude"]
+  $ snd $ Map.mapEither DB.parseAddress
   $ Map.mapKeys (\(PackageName p) -> PackageName $ stripPurescriptPrefix p) bowerPackagesMap
   where
     bowerPackagesMap :: Map PackageName Text
     bowerPackagesMap = fromRight mempty $ Json.eitherDecodeStrict Static.bowerPackagesJson
 
 
-toDhallSource :: PackageMeta -> Text
-toDhallSource PackageMeta{..} = Text.unlines
-  [ "let Registry = ../../RegistryV1.dhall"
+toDhallSource :: PackageMeta -> Text -> Text
+toDhallSource PackageMeta{..} version = Text.unlines
+  [ "let Registry = ../../v1/Registry.dhall"
   , "in  Registry.Package::{"
   , ", name = " <> (tshow . stripPurescriptPrefix . Bower.runPackageName) bowerName
   , case bowerLicense of
@@ -118,16 +121,18 @@ toDhallSource PackageMeta{..} = Text.unlines
       Nothing -> ""
       Just Bower.Repository{..}
         -> ", repository = Some (Registry.Repo." <> case parseRepo repositoryUrl of
-          Nothing -> "Git " <> tshow repositoryUrl <> ")"
+          Nothing -> "Git { url = " <> tshow repositoryUrl <> ", version = " <> version <> " })"
           Just (owner, repo)
-            -> "GitHub { owner = " <> tshow owner <> ", repo = " <> tshow repo <> " })"
+            -> "GitHub { owner = " <> tshow owner <> ", repo = " <> tshow repo <> ", version = " <> tshow version <> " })"
+  , ", targets = toMap { "
+  , if List.null bowerDependencies
+    then ", src = Registry.Target::{ sources = [ \"src/**/*.purs\" ], dependencies = [] : Registry.Dependencies }"
+    else ", src = Registry.Target::{ sources = [ \"src/**/*.purs\" ], dependencies = toMap { " <> Text.intercalate ", " (mkDep <$> bowerDependencies) <> " }}"
   , if List.null bowerDevDependencies
     then ""
-    else ", devDependencies = toMap { " <> Text.intercalate ", " (mkDep <$> bowerDevDependencies) <> " }"
-  , if List.null bowerDependencies
-    then ""
-    else ", dependencies = toMap { " <> Text.intercalate ", " (mkDep <$> bowerDependencies) <> " }"
-  , "}"
+    else ", test = Registry.Target::{ sources = [ \"src/**/*.purs\", \"test/**/*.purs\" ], dependencies = toMap { " <> Text.intercalate ", " (mkDep <$> bowerDevDependencies) <> " }}"
+  , " }"
+  , " }"
   ]
   where
     mkDep (packageName, versionRange)
