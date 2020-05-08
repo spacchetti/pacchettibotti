@@ -15,7 +15,7 @@ docsSearchRepo :: GitHub.Address
 docsSearchRepo = GitHub.Address "spacchetti" "purescript-docs-search"
 
 spagoRepo :: GitHub.Address
-spagoRepo = GitHub.Address "spacchetti" "spago"
+spagoRepo = GitHub.Address "purescript" "spago"
 
 purescriptRepo :: GitHub.Address
 purescriptRepo = GitHub.Address "purescript" "purescript"

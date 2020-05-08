@@ -3,7 +3,7 @@ module PacchettiBotti.Env
   , DB.HasDB
   ) where
 
-import           Spago.Prelude           hiding ( Env, HasEnv )
+import           Spago.Prelude
 
 import qualified Control.Concurrent.STM.TChan  as Chan
 import qualified GitHub
@@ -16,7 +16,6 @@ import qualified Data.Text.Encoding            as Encoding
 data Env = Env
   { envLogFunc :: !LogFunc
   , envGithubToken :: !GitHub.Auth
-  , envHealthchecksToken :: !String
   , envDB :: !DB.Handle
   -- | Main message bus. It is write-only so you should use `spawnThread` to read from it
   , envBus :: !(Chan.TChan Message)
@@ -75,7 +74,7 @@ data Message
 -- | Run the action with a fully loaded Env
 withEnv :: MonadUnliftIO m => RIO Env a -> m a
 withEnv action = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle -> do
-  logStderr <- setLogUseLoc False <$> logOptionsHandle stderr True
+  logStderr <- (setLogUseLoc False . setLogMinLevel LevelInfo) <$> logOptionsHandle stderr True
   logFile <- setLogUseLoc False <$> logOptionsHandle configHandle True
 
   withLogFunc logStderr $ \logFuncConsole -> withLogFunc logFile $ \logFuncFile ->
@@ -91,9 +90,6 @@ withEnv action = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle 
     logInfo "Reading GitHub token.."
     envGithubToken <- liftIO $ GitHub.OAuth . Encoding.encodeUtf8 . Text.pack
       <$> Env.getEnv "PACCHETTIBOTTI_GITHUB_TOKEN"
-
-    logInfo "Reading healthchecks.io token"
-    envHealthchecksToken <- liftIO $ Env.getEnv "PACCHETTIBOTTI_HEALTHCHECKSIO_TOKEN"
 
     -- Prepare data folder that will contain the temp copies of the repos
     logInfo "Creating 'data' folder"

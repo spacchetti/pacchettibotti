@@ -1,69 +1,106 @@
 module PacchettiBotti where
 
-import           PacchettiBotti.Prelude
+import           PacchettiBotti.Prelude hiding (Config(..))
 
 import qualified Control.Concurrent            as Concurrent
 import qualified Control.Concurrent.STM.TChan  as Chan
+import qualified Data.Aeson                    as Json
 import qualified Network.HTTP.Simple           as Http
+import qualified System.Environment            as Env
 
 import qualified PacchettiBotti.Threads.Generic
                                                as Common
 import qualified PacchettiBotti.Threads.Spago  as Spago
 import qualified PacchettiBotti.Threads.Registry
                                                as Registry
+import qualified PacchettiBotti.Registry.Bower as Registry
 import qualified PacchettiBotti.Threads.PackageSets
                                                as PackageSets
 import qualified PacchettiBotti.Threads.PackageSetsMetadata
                                                as Metadata
 
+data Config = Config
+  { enableHealthchecks :: Bool
+  , enableRegistryBowerSync :: Bool
+  , enablePackageSetsUpdate :: Bool
+  , enableSetsMetadataUpdate :: Bool
+  , enableVersionUpdates :: Bool
+  } deriving (Show, Generic)
+
+instance FromJSON Config
+
 
 main :: IO ()
-main = withEnv $ do
-  -- To kickstart updates we just need to send "heartbeats" on the bus every once in a while
-  -- Threads will be listening to this, do stuff, post things on the bus which we handle
-  -- here in the main thread
-  spawnThread "Hourly Heartbeat" hourlyHeartbeat
-  spawnThread "Daily Heartbeat" dailyHeartbeat
+main = Json.eitherDecodeFileStrict "config.json" >>= \case
+  Left err -> error err
+  Right config@Config{..} -> withEnv $ do
+    logInfo "Reading healthchecks.io token"
 
-  envBus <- view busL
-  pullChan <- atomically $ Chan.dupTChan envBus
-  forever $ atomically (Chan.readTChan pullChan) >>= handleMessage
+    maybeHealthcheckToken <-
+      if enableHealthchecks
+      then fmap Just $ liftIO $ Env.getEnv "PACCHETTIBOTTI_HEALTHCHECKSIO_TOKEN"
+      else pure Nothing
+
+    -- To kickstart updates we just need to send "heartbeats" on the bus every once in a while
+    -- Threads will be listening to this, do stuff, post things on the bus which we handle
+    -- here in the main thread
+    spawnThread "Hourly Heartbeat" hourlyHeartbeat
+    spawnThread "Daily Heartbeat" dailyHeartbeat
+
+    envBus <- view busL
+    pullChan <- atomically $ Chan.dupTChan envBus
+    forever $ atomically (Chan.readTChan pullChan)
+      >>= handleMessage maybeHealthcheckToken config
 
 
-handleMessage :: HasEnv env => Message -> RIO env ()
-handleMessage = \case
+handleMessage :: HasEnv env => Maybe String -> Config -> Message -> RIO env ()
+handleMessage healthchecksToken Config{..} = \case
   DailyUpdate ->
-    spawnThread "Bower packages daily update" $ Registry.refreshBowerPackages
+    when enableRegistryBowerSync $
+      spawnThread "Bower packages daily update" $ Registry.refreshBowerPackages
   HourlyUpdate -> do
-    spawnThread "releaseCheckPureScript" $ Common.checkLatestRelease Spago.purescriptRepo
-    spawnThread "releaseCheckDocsSearch" $ Common.checkLatestRelease Spago.docsSearchRepo
-    spawnThread "releaseCheckPackageSets" $ Common.checkLatestRelease PackageSets.packageSetsRepo
-    spawnThread "metadataFetcher" Metadata.fetcher
+    spawnThread "Check for new purs releases" $ Common.checkLatestRelease Spago.purescriptRepo
+    spawnThread "Check for new docs-search releases" $ Common.checkLatestRelease Spago.docsSearchRepo
+    spawnThread "Check for new package-sets releases" $ Common.checkLatestRelease PackageSets.packageSetsRepo
+
+    when enableSetsMetadataUpdate $
+      spawnThread "Fetch new metadata for packages in package-sets" Metadata.fetcher
+
     -- we curl this Healthchecks.io link every hour, otherwise Fabrizio gets emails :)
-    Env{ envHealthchecksToken } <- view envL
-    heartbeatUrl <- Http.parseRequest $ "https://hc-ping.com/" <> envHealthchecksToken
-    void $ Http.httpBS heartbeatUrl
+    case healthchecksToken of
+      Nothing -> pure ()
+      Just token -> do
+        heartbeatUrl <- Http.parseRequest $ "https://hc-ping.com/" <> token
+        void $ Http.httpBS heartbeatUrl
 
   NewPureScriptRelease ->
-    spawnThread "spagoUpdatePurescript" Spago.updatePurescriptVersion
+    when enableVersionUpdates $
+      spawnThread "Update purs version in Spago CI" Spago.updatePurescriptVersion
     -- TODO: update purescript-metadata repo on purs release
 
   NewPackageSetsRelease ->
-    spawnThread "spagoUpdatePackageSets" Spago.updatePackageSets
+    when enableVersionUpdates $
+      spawnThread "Update package-sets version in Spago templates" Spago.updatePackageSets
 
   NewDocsSearchRelease ->
-    spawnThread "spagoUpdateDocsSearch" Spago.updateDocsSearch
+    when enableVersionUpdates $
+      spawnThread "Update docs-search version in Spago" Spago.updateDocsSearch
 
   NewVerification cmd result ->
-    spawnThread "packageSetsCommenter" $ PackageSets.commenter cmd result
+    when enablePackageSetsUpdate $
+      spawnThread "Comment on new PRs in package-sets" $ PackageSets.commenter cmd result
 
   NewMetadata -> do
-    spawnThread "packageSetsUpdater" PackageSets.updater
-    spawnThread "metadataUpdater"    Metadata.updater
+    when enablePackageSetsUpdate $
+      spawnThread "Update packages in package-sets" PackageSets.updater
+    when enableSetsMetadataUpdate $
+      spawnThread "Push new metadata about packages in package-sets" Metadata.updater
 
   NewPackageSet -> pure ()
 
-  NewBowerRefresh -> pure () -- TODO: do something after we refresh releases from there
+  NewBowerRefresh ->
+    when enableRegistryBowerSync $
+      spawnThread "Sync Bower packages to the Registry" Registry.syncFromBower
 
 
 spawnThread :: HasEnv env => Text -> RIO Env () -> RIO env ()

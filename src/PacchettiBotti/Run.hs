@@ -82,8 +82,8 @@ runInClonedRepo address@GitHub.Address{..} branchName commit preAction commands 
         logInfo $ "Cloned " <> displayShow address
         -- Configure the repo: set the git identity to spacchettibotti and switch to the branch
         runInRepo
-          [ "git config --local user.name 'Spacchettibotti'"
-          , "git config --local user.email 'spacchettibotti@ferrai.io'"
+          [ "git config --local user.name 'Pacchettibotti'"
+          , "git config --local user.email 'pacchettibotti@ferrai.io'"
           , "git checkout " <> branchName <> " || git checkout -b " <> branchName
           ]
           (logError "Failed to configure the repo")

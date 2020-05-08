@@ -3,45 +3,68 @@ module PacchettiBotti.Registry.Bower where
 
 import PacchettiBotti.Prelude
 
-
-import qualified Data.Aeson                    as Json
-import qualified PacchettiBotti.Static         as Static
-import           Web.Bower.PackageMeta      (PackageMeta (..))
-import qualified Web.Bower.PackageMeta      as Bower
-import qualified Spago.Dhall as Dhall
-import qualified Data.Text as Text
-import qualified Text.Megaparsec               as Parse
+import qualified Data.Aeson as Json
 import qualified Data.List as List
-import qualified UnliftIO.Directory as Directory
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import qualified Data.Text as Text
 import qualified Network.HTTP.Simple as Http
+import qualified RIO.Time as Time
+import qualified Spago.Dhall as Dhall
+import qualified Text.Megaparsec as Parse
 import qualified Turtle
+import qualified UnliftIO.Directory as Directory
+import qualified Web.Bower.PackageMeta as Bower
+
+import           Web.Bower.PackageMeta      (PackageMeta (..))
 
 import qualified PacchettiBotti.DB as DB
 import qualified PacchettiBotti.GitHub as GitHub
+import qualified PacchettiBotti.Run as Run
+import qualified PacchettiBotti.Static as Static
 
 
 type Expr = Dhall.DhallExpr Dhall.Import
 
+registryRepo :: GitHub.Address
+registryRepo = GitHub.Address "purescript" "registry"
 
-importFromBower :: IO ()
-importFromBower = withEnv $ do
+syncFromBower :: HasEnv env => RIO env ()
+syncFromBower = do
+  today <- liftIO $ Text.pack . Time.showGregorian . Time.utctDay <$> Time.getCurrentTime
+  let commit = "Update manifests from Bower"
+  let branchName = "pacchettibotti-updates-" <> today
+  Run.runAndPushBranch branchName registryRepo commit writeMissingBowerManifests
+    [ "git add packages"
+    ]
+
+
+writeMissingBowerManifests :: HasEnv env => String -> RIO env ()
+writeMissingBowerManifests path = do
+  let indexPath = "package.dhall"
   -- first of all we get a listing of all the bower packages
-  let packages = Map.keys bowerPackages
+  -- let packages = Map.keys bowerPackages
+  let packages :: [PackageName] = [ PackageName "aff" , PackageName "prelude" ]
+  -- Then for every one of them..
   for_ packages $ \packageName@(PackageName package) -> do
-    -- TODO: clone the repo instead
-    let packageDir = "../registry/packages/" <> package
-    -- first we check if we have the directory. If not, we make one
+    let packageDir = Text.pack path <> "/packages/" <> package
+    -- first we check if we have the directory for it. If not, we make one
     whenM (not <$> testdir (pathFromText packageDir)) $ do
       logInfo $ "Directory did not exist for package " <> display package
       mktree $ pathFromText packageDir
-    -- then for every package there, we list all the files, which are the versions
-    -- TODO: exclude the index from the listing
-    versions <- Directory.listDirectory $ Text.unpack packageDir
+    -- then for every package directory we list all the files, which are the versions
+    -- Note that we exclude the version index from the listing!
+    versions
+      <- fmap (filter (== indexPath))
+      $ Directory.listDirectory $ Text.unpack packageDir
     -- then we query the DB for all releases for that package
     releases <- DB.transact $ DB.getReleasesForPackage packageName
-    -- TODO: write releases index
+    -- and write the release index
+    logInfo "Writing releases index.."
+    let packageIndexPath = packageDir <> "/" <> Text.pack indexPath
+    writeTextFile packageIndexPath (mkReleaseIndex releases)
+    Dhall.format packageIndexPath
+
     -- are there any releases that we don't have the file for?
     let notInFiles DB.Release{..} = not $ Set.member releaseTag $ Set.fromList $ Tag . Text.pack <$> versions
     let missingFiles = List.filter notInFiles releases
@@ -60,16 +83,18 @@ importFromBower = withEnv $ do
                 <> GitHub.untagName owner <> "/"
                 <> GitHub.untagName repo <> "/"
                 <> tag <> "/bower.json"
-          -- TODO: download the package.json too?
+          -- FIXME: download the package.json too?
           -- See https://github.com/purescript/registry/issues/20
           let packageInfo = displayShow releaseAddress <> "@" <> display tag
           let versionPath = packageDir <> "/" <> tag <> ".dhall"
           result <- try $ do
+            -- TODO: try to fetch the spago.dhall first and see if it conforms
+            -- to the registry schema. Not right now, there's no package doing it
             logInfo $ "Fetching Bower info for " <> packageInfo
             req <- Http.parseRequest $ Text.unpack url
             packageMeta <- Http.getResponseBody <$> Http.httpJSON req
             logDebug "Checking self-contained dependencies"
-            unlessM (selfContainedDependencies packageMeta) $ do
+            unlessM (selfContainedDependencies packageMeta) $
               error "Dependencies not self-contained on purescript packages!"
             logInfo $ "Writing package definition for " <> packageInfo
             writeTextFile versionPath (toDhallSource packageMeta tag)
@@ -88,11 +113,11 @@ importFromBower = withEnv $ do
 -- | Are all the dependencies PureScript packages?
 selfContainedDependencies :: HasDB env => PackageMeta -> RIO env Bool
 selfContainedDependencies PackageMeta{..} = do
-  packages <- Set.fromList <$> fmap DB.packageName <$> DB.transact DB.getAllPackages
+  packages <- Set.fromList . fmap DB.packageName <$> DB.transact DB.getAllPackages
   pure
     $ and
     $ (\d -> Set.member d packages)
-    <$> (PackageName . stripPurescriptPrefix . Bower.runPackageName . fst)
+    . (PackageName . stripPurescriptPrefix . Bower.runPackageName . fst)
     <$> (bowerDevDependencies <> bowerDependencies)
 
 
@@ -103,8 +128,7 @@ toSkip = Set.fromList []
 
 bowerPackages :: Map PackageName DB.Address
 bowerPackages
-  = (flip Map.restrictKeys) [PackageName "aff", PackageName "prelude"]
-  $ snd $ Map.mapEither DB.parseAddress
+  = snd $ Map.mapEither DB.parseAddress
   $ Map.mapKeys (\(PackageName p) -> PackageName $ stripPurescriptPrefix p) bowerPackagesMap
   where
     bowerPackagesMap :: Map PackageName Text
@@ -162,3 +186,9 @@ parseRepo = Parse.parseMaybe parseRepoString
 
 stripPurescriptPrefix :: Text -> Text
 stripPurescriptPrefix name = fromMaybe name $ Text.stripPrefix "purescript-" name
+
+
+mkReleaseIndex :: [DB.Release] -> Text
+mkReleaseIndex releases = "{ " <> foldMap mkReleaseLine releases <> " }"
+  where
+    mkReleaseLine DB.Release{ releaseTag = Tag tag } = "\n, `" <> tag <> "` = ./" <> tag <> ".dhall"

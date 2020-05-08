@@ -11,7 +11,7 @@ module PacchettiBotti.Prelude
   ) where
 
 import PacchettiBotti.Env
-import Spago.Prelude hiding (Env, HasEnv(..))
+import Spago.Prelude
 import Spago.GlobalCache (Tag(..), CommitHash(..), RepoMetadataV1(..), ReposMetadataV1)
 import Spago.Types
 import           Data.Aeson.Encode.Pretty       ( encodePretty )
