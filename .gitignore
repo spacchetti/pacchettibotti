@@ -5,3 +5,4 @@
 db.sqlite*
 data
 .vscode
+stack.yaml.lock
