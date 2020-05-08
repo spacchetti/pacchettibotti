@@ -3,8 +3,8 @@ packages:
 - .
 extra-deps:
 - github: purescript/spago
-  commit: 8c87389f88b9caf00b505aaf35efba24836a4098
-- dhall-1.29.0
+  commit: 5beef6723a0756d3661e87746d6d08847cf792ed
+- dhall-1.31.1
 - atomic-write-0.2.0.7
 - prettyprinter-1.5.1
 - github-0.25
@@ -19,12 +19,12 @@ extra-deps:
 - dotgen-0.4.2
 - megaparsec-7.0.3
 - repline-0.2.1.0
-- rio-0.1.12.0
+- rio-0.1.13.0
 - rio-orphans-0.1.1.0
 - serialise-0.2.1.0
 - Win32-2.5.4.1@sha256:e623a1058bd8134ec14d62759f76cac52eee3576711cb2c4981f398f1ec44b85
 - Glob-0.10.0
-- turtle-1.5.14
+- turtle-1.5.18
 - libyaml-0.1.1.0@sha256:b3fcd8c44622c75e054c2267f3fec39a58a311748000310cbc8257a4683d3f02,2090
 - yaml-0.11.1.0@sha256:3dc3ed2760f6d1bb280b3a2da29f9032f508d57bfc545fb16b1424f2a5560641,5079
 - th-lift-0.8.0.1@sha256:cceb81b12c0580e02a7a3898b6d60cca5e1be080741f69ddde4f12210d8ba7ca,1960
@@ -42,6 +42,7 @@ extra-deps:
 - typed-process-0.2.6.0@sha256:c901c13d491441830eb23132ad6968243a56b98161629d260a26c0b13c735fcd
 - unliftio-0.2.12@sha256:b089fbc2ff2628a963c2c4b12143f2020874e3e5144ffd6c62b25639a0ca1483
 - hspec-megaparsec-2.0.1@sha256:7f26ab334eaa653054766110cf259c31314d1c2ec170270e56101e344ce65ef9,2163
+- with-utf8-1.0.0.0@sha256:686e47588986d8080451b4e617118b579487dd4e085bba7bb36fac4198c90ae6,2480
 allow-newer: true
 nix:
   packages: [zlib]

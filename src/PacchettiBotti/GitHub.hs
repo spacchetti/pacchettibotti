@@ -112,7 +112,6 @@ getPullRequestForUser user Address{..} = do
         $ fmap hush
         $ GitHub.github token
         $ GitHub.pullRequestR owner repo simplePullRequestNumber
-  -- TODO: there must be a nice way to lift this instead of casing
   case (findPRbyUser =<< maybePRs :: Maybe GitHub.SimplePullRequest) of
     Nothing -> pure Nothing
     Just pr -> fetchFullPR pr

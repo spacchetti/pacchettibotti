@@ -74,13 +74,16 @@ runInClonedRepo address@GitHub.Address{..} branchName commit preAction commands 
 
     (code, _out, _err) <- runWithCwd path $ "git clone git@github.com:" <> GitHub.untagName owner <> "/" <> GitHub.untagName repo <> ".git"
     if code /= ExitSuccess
-      then logError "Error while cloning repo"
+      then do
+        logError "Error while cloning repo"
+        logError $ "Stdout: " <> display _out
+        logError $ "Stderr: " <> display _err
       else do
         logInfo $ "Cloned " <> displayShow address
         -- Configure the repo: set the git identity to spacchettibotti and switch to the branch
         runInRepo
-          [ "git config --local user.name 'Spacchettibotti'"
-          , "git config --local user.email 'spacchettibotti@ferrai.io'"
+          [ "git config --local user.name 'Pacchettibotti'"
+          , "git config --local user.email 'pacchettibotti@ferrai.io'"
           , "git checkout " <> branchName <> " || git checkout -b " <> branchName
           ]
           (logError "Failed to configure the repo")

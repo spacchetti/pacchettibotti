@@ -69,6 +69,7 @@ library:
   - aeson-pretty
   - async-pool
   - base >= 4.7 && < 5
+  - bower-json
   - bytestring
   - containers
   - dhall
@@ -93,6 +94,8 @@ library:
   - temporary
   - text < 1.3
   - time
+  - turtle
+  - unliftio
   - vector
 
 executables:
@@ -106,8 +109,10 @@ executables:
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
+    - aeson
     - base >= 4.7 && < 5
     - containers
+    - http-conduit
     - pacchettibotti
     - stm
     - text < 1.3

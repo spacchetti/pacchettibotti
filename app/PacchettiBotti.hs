@@ -1,99 +1,106 @@
 module PacchettiBotti where
 
-import           PacchettiBotti.Prelude
+import           PacchettiBotti.Prelude hiding (Config(..))
 
 import qualified Control.Concurrent            as Concurrent
 import qualified Control.Concurrent.STM.TChan  as Chan
-import qualified Data.Text                     as Text
-import qualified Data.Text.Encoding            as Encoding
-import qualified GHC.IO.Encoding
+import qualified Data.Aeson                    as Json
+import qualified Network.HTTP.Simple           as Http
 import qualified System.Environment            as Env
 
-import qualified PacchettiBotti.DB             as DB
-import qualified PacchettiBotti.GitHub         as GitHub
 import qualified PacchettiBotti.Threads.Generic
                                                as Common
 import qualified PacchettiBotti.Threads.Spago  as Spago
 import qualified PacchettiBotti.Threads.Registry
                                                as Registry
+import qualified PacchettiBotti.Registry.Bower as Registry
 import qualified PacchettiBotti.Threads.PackageSets
                                                as PackageSets
 import qualified PacchettiBotti.Threads.PackageSetsMetadata
                                                as Metadata
 
+data Config = Config
+  { enableHealthchecks :: Bool
+  , enableRegistryBowerSync :: Bool
+  , enablePackageSetsUpdate :: Bool
+  , enableSetsMetadataUpdate :: Bool
+  , enableVersionUpdates :: Bool
+  } deriving (Show, Generic)
+
+instance FromJSON Config
+
 
 main :: IO ()
-main = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle -> do
-  logStderr <- setLogUseLoc False <$> logOptionsHandle stderr True
-  logFile <- setLogUseLoc False <$> logOptionsHandle configHandle True
+main = Json.eitherDecodeFileStrict "config.json" >>= \case
+  Left err -> error err
+  Right config@Config{..} -> withEnv $ do
+    logInfo "Reading healthchecks.io token"
 
-  withLogFunc logStderr $ \logFuncConsole -> withLogFunc logFile $ \logFuncFile ->
-    let envLogFunc = logFuncConsole <> logFuncFile
-    in runRIO envLogFunc $ do
-    -- We always want to run in UTF8 anyways
-    liftIO $ GHC.IO.Encoding.setLocaleEncoding GHC.IO.Encoding.utf8
-    -- Stop `git` from asking for input, not gonna happen
-    -- We just fail instead. Source:
-    -- https://serverfault.com/questions/544156
-    liftIO $ Env.setEnv "GIT_TERMINAL_PROMPT" "0"
+    maybeHealthcheckToken <-
+      if enableHealthchecks
+      then fmap Just $ liftIO $ Env.getEnv "PACCHETTIBOTTI_HEALTHCHECKSIO_TOKEN"
+      else pure Nothing
 
-    -- Read GitHub Auth Token
-    logInfo "Reading GitHub token.."
-    envGithubToken <- liftIO $ GitHub.OAuth . Encoding.encodeUtf8 . Text.pack
-      <$> Env.getEnv "SPACCHETTIBOTTI_TOKEN"
+    -- To kickstart updates we just need to send "heartbeats" on the bus every once in a while
+    -- Threads will be listening to this, do stuff, post things on the bus which we handle
+    -- here in the main thread
+    spawnThread "Hourly Heartbeat" hourlyHeartbeat
+    spawnThread "Daily Heartbeat" dailyHeartbeat
 
-    -- Prepare data folder that will contain the temp copies of the repos
-    logInfo "Creating 'data' folder"
-    mktree "data"
-
-    envBus <- liftIO Chan.newBroadcastTChanIO
-
-    logInfo "Migrating DB.."
-    envDB <- DB.mkDB
-
-    let env = Env{..}
-
-    runRIO env $ do
-      -- To kickstart updates we just need to send "heartbeats" on the bus every once in a while
-      -- Threads will be listening to this, do stuff, post things on the bus which we handle
-      -- here in the main thread
-      spawnThread "Hourly Heartbeat" hourlyHeartbeat
-      spawnThread "Daily Heartbeat" dailyHeartbeat
-
-      pullChan <- atomically $ Chan.dupTChan envBus
-      forever $ atomically (Chan.readTChan pullChan) >>= handleMessage
+    envBus <- view busL
+    pullChan <- atomically $ Chan.dupTChan envBus
+    forever $ atomically (Chan.readTChan pullChan)
+      >>= handleMessage maybeHealthcheckToken config
 
 
-handleMessage :: HasEnv env => Message -> RIO env ()
-handleMessage = \case
+handleMessage :: HasEnv env => Maybe String -> Config -> Message -> RIO env ()
+handleMessage healthchecksToken Config{..} = \case
   DailyUpdate ->
-    spawnThread "Bower packages daily update" $ Registry.refreshBowerPackages
+    when enableRegistryBowerSync $
+      spawnThread "Bower packages daily update" $ Registry.refreshBowerPackages
   HourlyUpdate -> do
-    spawnThread "releaseCheckPureScript" $ Common.checkLatestRelease Spago.purescriptRepo
-    spawnThread "releaseCheckDocsSearch" $ Common.checkLatestRelease Spago.docsSearchRepo
-    spawnThread "releaseCheckPackageSets" $ Common.checkLatestRelease PackageSets.packageSetsRepo
-    spawnThread "metadataFetcher" Metadata.fetcher
+    spawnThread "Check for new purs releases" $ Common.checkLatestRelease Spago.purescriptRepo
+    spawnThread "Check for new docs-search releases" $ Common.checkLatestRelease Spago.docsSearchRepo
+    spawnThread "Check for new package-sets releases" $ Common.checkLatestRelease PackageSets.packageSetsRepo
+
+    when enableSetsMetadataUpdate $
+      spawnThread "Fetch new metadata for packages in package-sets" Metadata.fetcher
+
+    -- we curl this Healthchecks.io link every hour, otherwise Fabrizio gets emails :)
+    case healthchecksToken of
+      Nothing -> pure ()
+      Just token -> do
+        heartbeatUrl <- Http.parseRequest $ "https://hc-ping.com/" <> token
+        void $ Http.httpBS heartbeatUrl
 
   NewPureScriptRelease ->
-    spawnThread "spagoUpdatePurescript" Spago.updatePurescriptVersion
+    when enableVersionUpdates $
+      spawnThread "Update purs version in Spago CI" Spago.updatePurescriptVersion
     -- TODO: update purescript-metadata repo on purs release
 
   NewPackageSetsRelease ->
-    spawnThread "spagoUpdatePackageSets" Spago.updatePackageSets
+    when enableVersionUpdates $
+      spawnThread "Update package-sets version in Spago templates" Spago.updatePackageSets
 
   NewDocsSearchRelease ->
-    spawnThread "spagoUpdateDocsSearch" Spago.updateDocsSearch
+    when enableVersionUpdates $
+      spawnThread "Update docs-search version in Spago" Spago.updateDocsSearch
 
   NewVerification cmd result ->
-    spawnThread "packageSetsCommenter" $ PackageSets.commenter cmd result
+    when enablePackageSetsUpdate $
+      spawnThread "Comment on new PRs in package-sets" $ PackageSets.commenter cmd result
 
   NewMetadata -> do
-    spawnThread "packageSetsUpdater" PackageSets.updater
-    spawnThread "metadataUpdater"    Metadata.updater
+    when enablePackageSetsUpdate $
+      spawnThread "Update packages in package-sets" PackageSets.updater
+    when enableSetsMetadataUpdate $
+      spawnThread "Push new metadata about packages in package-sets" Metadata.updater
 
   NewPackageSet -> pure ()
 
-  NewBowerRefresh -> pure () -- TODO: do something after we refresh releases from there
+  NewBowerRefresh ->
+    when enableRegistryBowerSync $
+      spawnThread "Sync Bower packages to the Registry" Registry.syncFromBower
 
 
 spawnThread :: HasEnv env => Text -> RIO Env () -> RIO env ()

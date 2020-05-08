@@ -8,9 +8,11 @@ module PacchettiBotti.DB
   , getReleases
   , getLatestRelease
   , getBannedReleases
+  , getReleasesForPackage
   , getCommits
   , getPackageSet
   , getPackageSetMetadata
+  , getAllPackages
   , insertPackage
   , insertReleases
   , insertCommits
@@ -134,9 +136,27 @@ shouldFetchHappen fetchType now = do
     threshold = Time.addUTCTime (- (Time.nominalDay / 48)) now
 
 
+getPackage :: Spago.PackageName -> Query (Maybe Package)
+getPackage packageName = fmap Persist.entityVal
+  <$> Persist.selectFirst [ PackageName ==. packageName ] [ ]
+
+
+getAllPackages :: Query [Package]
+getAllPackages = fmap Persist.entityVal <$> Persist.selectList [ ] [ ]
+
+
 getReleases :: Address -> Query [Release]
 getReleases address = fmap Persist.entityVal
   <$> Persist.selectList [ ReleaseAddress ==. address ] [ Persist.Desc ReleaseId ]
+
+
+getReleasesForPackage :: Spago.PackageName -> Query [Release]
+getReleasesForPackage packageName = do
+  maybePackage <- getPackage packageName
+  case maybePackage of
+    Nothing -> pure []
+    Just Package{ packageAddress } -> fmap Persist.entityVal
+      <$> Persist.selectList [ ReleaseAddress ==. packageAddress ] [ Persist.Desc ReleaseId ]
 
 
 getLatestRelease :: Address -> Query (Maybe Tag)

@@ -7,6 +7,7 @@ import qualified Data.Map.Strict               as Map
 import qualified Spago.Dhall                   as Dhall
 import qualified Dhall.Map
 import qualified Spago.Config
+import qualified Spago.Async                   as Async
 import qualified Data.ByteString.Lazy          as BSL
 import qualified GHC.IO
 
@@ -31,9 +32,9 @@ fetcher = do
   logInfo $ "Fetching metadata for " <> display (length packages) <> " packages"
 
   -- Call GitHub for all these packages, get metadata for them, save to DB
-  void $ withTaskGroup' 5 $ \taskGroup -> do
-    asyncs <- for packages (async' taskGroup . fetchRepoMetadata)
-    for asyncs wait'
+  void $ Async.withTaskGroup 5 $ \taskGroup -> do
+    asyncs <- for packages (Async.async taskGroup . fetchRepoMetadata)
+    for asyncs Async.wait
 
   logInfo "Fetched all metadata, saved to DB."
   writeBus NewMetadata

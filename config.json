@@ -1,0 +1,7 @@
+{
+  "enableHealthchecks": true,
+  "enableRegistryBowerSync": true,
+  "enablePackageSetsUpdate": true,
+  "enableSetsMetadataUpdate": true,
+  "enableVersionUpdates": true
+}

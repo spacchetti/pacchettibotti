@@ -41,16 +41,8 @@ commenter commandRun result = do
     Just GitHub.PullRequest{..} -> do
       let commentBody = case result of
             (ExitSuccess, _, _) -> "Result of `" <> commandRun <> "` in a clean project: **success** 🎉"
-            (_, out, err) -> Text.unlines
+            (_, _out, err) -> Text.unlines
               [ "Result of `" <> commandRun <> "` in a clean project: **failure** 😱"
-              , ""
-              , "<details><summary>Output of `" <> commandRun <> "`</summary><p>"
-              , ""
-              , "```"
-              , out
-              , "```"
-              , ""
-              , "</p></details>"
               , ""
               , "<details><summary>Error output</summary><p>"
               , ""
@@ -124,10 +116,11 @@ updater = do
             $ updateVersion packageName tag
 
         -- If we don't have anything to commit, then we actually skip verification
-        (exitCode, _, _) <- Run.runWithCwd path "git diff --exit-code"
+        (exitCode, out, _err) <- Run.runWithCwd path "git diff --exit-code"
         case exitCode of
           ExitSuccess -> logInfo "Tried refreshing package-sets' Dhall, but got nothing new to commit"
           _ -> do
+            logInfo $ "Output: " <> display out
             logInfo "Verifying new set. This might take a LONG while.."
             let verifyCmd (PackageName package, _) = "spago -C verify " <> package
             let cmd = "cd src && " <> Text.intercalate " && " (map verifyCmd packages)
@@ -145,7 +138,7 @@ updater = do
 
   unless (null newVersions) $ do
     logInfo $ displayShow newVersions
-    -- If we have more than one package to update, let's see if we already have an
+    -- If we have at least one package to update, let's see if we already have an
     -- open PR to package-sets. If we do we can just commit there
     maybePR <- GitHub.getPullRequestForUser "spacchettibotti" packageSetsRepo
 
