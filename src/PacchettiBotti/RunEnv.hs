@@ -20,7 +20,7 @@ withEnv action = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle 
 
   withLogFunc logStderr $ \logFuncConsole -> withLogFunc logFile $ \logFuncFile ->
     let envLogFunc = logFuncConsole <> logFuncFile
-    in runRIO envLogFunc $ do
+    in runRIO envLogFunc $ withResourceMap $ \envResourceMap -> do
     -- We always want to run in UTF8 anyways
     liftIO $ GHC.IO.Encoding.setLocaleEncoding GHC.IO.Encoding.utf8
     -- Stop `git` from asking for input, not gonna happen
