@@ -2,9 +2,8 @@ module PacchettiBotti.DB
   ( module PacchettiBotti.DB.Schema
   , mkDB
   , transact
-  , Handle
+  , DB.Handle
   , Query
-  , HasDB(..)
   , getReleases
   , getLatestRelease
   , getBannedReleases
@@ -22,7 +21,7 @@ module PacchettiBotti.DB
   , Release(..)
   ) where
 
-import           Spago.Prelude           hiding ( Handle )
+import PacchettiBotti.Prelude hiding (Handle, Package, PackageName)
 
 import qualified Database.Persist.Sqlite       as Persist
 import qualified Data.Map.Strict               as Map
@@ -35,7 +34,8 @@ import           Database.Persist.Sqlite        ( (=.)
                                                 , (==.)
                                                 , (>=.)
                                                 )
-import           PacchettiBotti.DB.Schema
+import PacchettiBotti.DB.Schema
+import qualified PacchettiBotti.DB.Handle as DB
 import Data.Time (UTCTime)
 import qualified Data.Time as Time
 import           System.FileLock                ( withFileLock
@@ -47,25 +47,13 @@ import           Spago.GlobalCache              ( ReposMetadataV1
                                                 )
 
 
-class HasDB env where
-  dbL :: Lens' env Handle
-
-newtype Handle = Handle { handlePool :: Persist.ConnectionPool }
-
-instance HasDB Handle where
-  dbL = id
-
 -- | Our type synonym for environment that allows accessing 'SqlBackend'.
 type Query a = forall env . ReaderT Persist.SqlBackend (RIO env) a
 
-
-newSqlitePool :: HasLogFunc env => RIO env Persist.ConnectionPool
-newSqlitePool = Persist.createSqlitePool "db.sqlite" 5
-
-mkDB :: HasLogFunc env => RIO env Handle
+mkDB :: RIO LogFunc DB.Handle
 mkDB = do
-  connectionPool <- newSqlitePool
-  let dbHandle = Handle connectionPool
+  connectionPool <- Persist.createSqlitePool "db.sqlite" 5
+  let dbHandle = DB.Handle connectionPool
   runRIO dbHandle $ transact $ Persist.runMigration migrateAll
   pure dbHandle
 
@@ -80,7 +68,7 @@ mkDB = do
 --  smarter retry logic.
 transact :: HasDB env => Query a -> RIO env a
 transact m = do
-  Handle{..} <- view dbL
+  DB.Handle{..} <- view (the @DB.Handle)
   liftIO $ withFileLock "db.sqlite" Exclusive $ const $
     runRIO handlePool $ Persist.runSqlPool m handlePool
 
@@ -178,7 +166,7 @@ getBannedReleases = do
       -- Because if it's not, then there will be a new one that might fix the issue.
       Just latest | latest == releaseTag -> do
         maybePackage <- fmap Persist.entityVal <$> Persist.selectFirst [ PackageAddress ==. releaseAddress ] [ ]
-        pure $ ((,releaseTag) . packageName) <$> maybePackage
+        pure $ ((,releaseTag) . PacchettiBotti.DB.Schema.packageName) <$> maybePackage
       _ -> pure Nothing
   pure $ Set.fromList $ catMaybes bannedPackages
 

@@ -33,6 +33,7 @@ default-extensions:
 - DeriveFunctor
 - DeriveGeneric
 - DeriveTraversable
+- DerivingStrategies
 - DoAndIfThenElse
 - EmptyDataDecls
 - ExistentialQuantification
@@ -49,6 +50,7 @@ default-extensions:
 - MultiWayIf
 - NamedFieldPuns
 - NoImplicitPrelude
+- NoMonomorphismRestriction
 - OverloadedStrings
 - PartialTypeSignatures
 - PatternGuards
@@ -58,6 +60,7 @@ default-extensions:
 - ScopedTypeVariables
 - StandaloneDeriving
 - TupleSections
+- TypeApplications
 - TypeFamilies
 - TypeSynonymInstances
 - ViewPatterns
@@ -75,6 +78,7 @@ library:
   - dhall
   - filelock
   - filepath
+  - generic-lens
   - github
   - http-api-data
   - http-client

@@ -107,7 +107,7 @@ updater = do
   let newVersionsWithBanned = computePackagesToUpdate newMetadata banned
   let newVersions = Map.filterWithKey removeBannedOverrides newVersionsWithBanned
 
-  let patchVersions :: (HasLogFunc env, HasBus env) => GHC.IO.FilePath -> RIO env ()
+  let patchVersions :: (HasLog env, HasBus env) => GHC.IO.FilePath -> RIO env ()
       patchVersions path = do
         let packages = Map.toList newVersionsWithBanned
         for_ packages $ \(packageName, (tag, owner)) -> do

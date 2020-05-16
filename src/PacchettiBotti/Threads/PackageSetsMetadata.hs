@@ -65,23 +65,23 @@ fetcher = do
     -- | Tries to read in a PackageSet from GitHub, master branch
     --   (so we always get the most up to date and we don't have to wait for a release)
     fetchPackageSet
-      :: (MonadIO m, MonadThrow m, MonadReader env m, HasLogFunc env)
+      :: (MonadIO m, MonadReader env m, HasLog env)
       => m (Map PackageName Package)
     fetchPackageSet = do
       expr <- liftIO $ Dhall.inputExpr "https://raw.githubusercontent.com/purescript/package-sets/master/src/packages.dhall"
-      case expr of
+      liftLog $ case expr of
         Dhall.RecordLit pkgs -> Map.mapKeys PackageName . Dhall.Map.toMap
           <$> traverse Spago.Config.parsePackage pkgs
         something -> throwM $ Dhall.PackagesIsNotRecord something
 
 
 -- | Whenever there's a new metadata set, push it to the repo
-updater :: (HasDB env, HasLogFunc env) => RIO env ()
+updater :: (HasDB env, HasLog env) => RIO env ()
 updater = do
   -- Get metadata
   metadata <- DB.transact DB.getPackageSetMetadata
   -- Write the metadata to file
-  let writeMetadata :: HasLogFunc env => GHC.IO.FilePath -> RIO env ()
+  let writeMetadata :: HasLog env => GHC.IO.FilePath -> RIO env ()
       writeMetadata tempfolder = do
         path <- makeAbsolute (tempfolder </> "metadataV1new.json")
         logInfo $ "Writing metadata to file: " <> displayShow path

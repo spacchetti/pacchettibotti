@@ -17,7 +17,7 @@ type Expr = Dhall.DhallExpr Dhall.Import
 
 
 runAndPushBranch
-  :: HasLogFunc env
+  :: HasLog env
   => Text
   -> GitHub.Address
   -> Text
@@ -29,7 +29,7 @@ runAndPushBranch branchName address commit preAction commands
 
 
 runAndPushMaster
-  :: HasLogFunc env
+  :: HasLog env
   => GitHub.Address
   -> Text
   -> (GHC.IO.FilePath -> RIO env ())
@@ -51,7 +51,7 @@ runAndOpenPR pr@GitHub.SimplePR{ prAddress = address@GitHub.Address{..}, ..} pre
 
 
 runInClonedRepo
-  :: HasLogFunc env
+  :: HasLog env
   => GitHub.Address
   -> Text
   -> Text
@@ -105,20 +105,20 @@ runInClonedRepo address@GitHub.Address{..} branchName commit preAction commands 
             (logInfo "Nothing to commit, skipping.."))
 
 
-runWithCwd :: HasLogFunc env => GHC.IO.FilePath -> Text -> RIO env (ExitCode, Text, Text)
+runWithCwd :: HasLog env => GHC.IO.FilePath -> Text -> RIO env (ExitCode, Text, Text)
 runWithCwd cwd cmd = do
   logDebug $ "Running in path " <> displayShow cwd <> ": `" <> display cmd <> "`"
   let processWithNewCwd = (Process.shell (Text.unpack cmd)) { Process.cwd = Just cwd }
   systemStrictWithErr processWithNewCwd empty
 
 
-getLatestCommitTime :: HasLogFunc env => GHC.IO.FilePath -> RIO env Time.UTCTime
+getLatestCommitTime :: HasLog env => GHC.IO.FilePath -> RIO env Time.UTCTime
 getLatestCommitTime path = do
   (_code, out, _err) <- runWithCwd path "git show -s --format=%ci"
   Time.parseTimeM True Time.defaultTimeLocale "%Y-%m-%d %H:%M:%S %z" $ Text.unpack out
 
 
-withAST :: HasLogFunc env => Text -> (Expr -> RIO env Expr) -> RIO env ()
+withAST :: HasLog env => Text -> (Expr -> RIO env Expr) -> RIO env ()
 withAST path transform = do
   rawConfig <- liftIO $ Dhall.readRawExpr path
   case rawConfig of

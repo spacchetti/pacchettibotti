@@ -48,7 +48,7 @@ fetchAndSaveTags address@(Address owner repo) = do
   if shouldFetch
   then do
     logInfo $ "Getting tags for " <> displayShow address
-    token <- view githubTokenL
+    token <- view (the @GitHub.Auth)
     res <- liftIO $ GitHub.github token $ GitHub.tagsForR owner repo GitHub.FetchAll
     for (Vector.toList . fmap mkRelease <$> res) $ \tags -> do
       DB.transact $ do
@@ -78,7 +78,7 @@ fetchAndSaveCommits address@(Address owner repo) = do
   if shouldFetch
   then do
     logInfo $ "Getting commits for " <> displayShow address
-    token <- view githubTokenL
+    token <- view (the @GitHub.Auth)
     res <- liftIO $ GitHub.github token $ GitHub.commitsForR owner repo GitHub.FetchAll
     for (Vector.toList . fmap mkCommit <$> res) $ \commits -> do
       DB.transact $ do
@@ -101,7 +101,7 @@ getPullRequestForUser
   -> Address
   -> RIO env (Maybe GitHub.PullRequest)
 getPullRequestForUser user Address{..} = do
-  token <- view githubTokenL
+  token <- view (the @GitHub.Auth)
   maybePRs <- liftIO $ fmap hush $ GitHub.github token
     $ GitHub.pullRequestsForR owner repo GitHub.stateOpen GitHub.FetchAll
   let findPRbyUser = Vector.find
@@ -123,7 +123,7 @@ getCommentsOnPR
   -> GitHub.IssueNumber
   -> RIO env [GitHub.IssueComment]
 getCommentsOnPR Address{..} issueNumber = do
-  token <- view githubTokenL
+  token <- view (the @GitHub.Auth)
   eitherComments <- liftIO
     $ GitHub.github token
     $ GitHub.commentsR owner repo issueNumber GitHub.FetchAll
@@ -139,7 +139,7 @@ updatePullRequestBody
   -> Text
   -> RIO env ()
 updatePullRequestBody Address{..} pullRequestNumber newBody = do
-  token <- view githubTokenL
+  token <- view (the @GitHub.Auth)
   void
     $ liftIO
     $ GitHub.github token
@@ -150,7 +150,7 @@ updatePullRequestBody Address{..} pullRequestNumber newBody = do
 openPR :: HasGitHub env => Address -> SimplePR -> RIO env ()
 openPR Address{..} SimplePR{..} = do
   logInfo "Pushed a new commit, opening PR.."
-  token <- view githubTokenL
+  token <- view (the @GitHub.Auth)
   response <- liftIO $ GitHub.github token
     $ GitHub.createPullRequestR owner repo
     $ GitHub.CreatePullRequest prTitle prBody prBranchName "master"
@@ -163,7 +163,7 @@ pullRequestExists :: HasGitHub env => Address -> SimplePR -> RIO env Bool
 pullRequestExists Address{..} SimplePR{..} = do
   logInfo $ "Checking if we ever opened a PR " <> displayShow prTitle
 
-  token <- view githubTokenL
+  token <- view (the @GitHub.Auth)
   oldPRs <- liftIO
     $ GitHub.github token
     $ GitHub.pullRequestsForR owner repo
@@ -183,7 +183,7 @@ pullRequestExists Address{..} SimplePR{..} = do
 
 commentOnPR :: HasGitHub env => Address -> GitHub.IssueNumber -> Text -> RIO env ()
 commentOnPR Address{..} pullRequestNumber commentBody = do
-  token <- view githubTokenL
+  token <- view (the @GitHub.Auth)
   (liftIO $ GitHub.github token $ GitHub.createCommentR owner repo pullRequestNumber commentBody) >>= \case
     Left err -> logError $ "Something went wrong while commenting. Error: " <> displayShow err
     Right _ -> logInfo "Commented on the open PR"
