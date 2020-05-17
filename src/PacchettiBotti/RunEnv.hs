@@ -41,7 +41,7 @@ withEnv action = withBinaryFile "pacchettibotti.log" AppendMode $ \configHandle 
     RIO.logInfo "Migrating DB.."
     envDB <- DB.mkDB
 
-    let envLogContext = LogContext ""
+    let envLogContext = LogContext "/"
     let env = Env{..}
 
     runRIO env action

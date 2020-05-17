@@ -9,6 +9,7 @@ module PacchettiBotti.GitHub
   , openPR
   , pullRequestExists
   , commentOnPR
+  , addMergifyLabel
   , GitHub.Auth(..)
   , GitHub.Release(..)
   , GitHub.PullRequest(..)
@@ -146,6 +147,19 @@ updatePullRequestBody Address{..} pullRequestNumber newBody = do
     $ GitHub.updatePullRequestR owner repo pullRequestNumber
     $ GitHub.EditPullRequest Nothing (Just newBody) Nothing Nothing Nothing
 
+
+addMergifyLabel
+  :: HasGitHub env
+  => Address
+  -> GitHub.IssueNumber
+  -> RIO env ()
+addMergifyLabel Address{..} issueNumber = do
+  token <- view (the @GitHub.Auth)
+  let issueId = GitHub.mkId (Proxy @GitHub.Issue) $ GitHub.unIssueNumber issueNumber
+  void
+    $ liftIO
+    $ GitHub.github token
+    $ GitHub.addLabelsToIssueR owner repo issueId ["mergify"]
 
 openPR :: HasGitHub env => Address -> SimplePR -> RIO env ()
 openPR Address{..} SimplePR{..} = do

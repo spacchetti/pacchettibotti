@@ -31,7 +31,7 @@ packageSetsPackageName = PackageName "__internal__.package-sets"
 --   on the PR thread (if any)
 commenter :: HasEnv env => Text -> VerificationResult -> RIO env ()
 commenter commandRun result = do
-  maybePR <- GitHub.getPullRequestForUser "spacchettibotti" packageSetsRepo
+  maybePR <- GitHub.getPullRequestForUser "pacchettibotti" packageSetsRepo
 
   case maybePR of
     Nothing -> do
@@ -53,6 +53,11 @@ commenter commandRun result = do
               , "</p></details>"
               ]
       GitHub.commentOnPR packageSetsRepo pullRequestNumber commentBody
+      -- Add mergify label if successful
+      case result of
+        (ExitSuccess, _, _) -> GitHub.addMergifyLabel packageSetsRepo pullRequestNumber
+        _ -> pure ()
+
 
 
 data BotCommand
