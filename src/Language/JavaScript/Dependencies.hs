@@ -29,6 +29,14 @@ dependency moduleId
   | otherwise
   = mempty
 
+-- | A predicate for the [`require`](https://nodejs.org/api/modules.html#modules_require_id) CommonJS function.
+isCommonJsRequire :: JSExpression -> Bool
+isCommonJsRequire = \case
+  JSMemberDot (JSIdentifier _ "module") _ (JSIdentifier _ "require") -> True
+  JSCallExpressionDot (JSIdentifier _ "module") _ (JSIdentifier _ "require") -> True
+  JSIdentifier _ "require" -> True
+  _ -> False
+
 -- | Collects all third party dependencies of a JavaScript AST.
 jsAstDependencies :: JSAST -> Dependencies
 jsAstDependencies = \case
@@ -118,10 +126,12 @@ jsStatementDependencies = \case
   JSAssignStatement assignee _ assigned _ ->
        jsExpressionDependencies assignee
     <> jsExpressionDependencies assigned
-  JSMethodCall (JSIdentifier _ "require") _ (JSLOne (JSStringLiteral _ moduleId)) _ _ ->
-    dependency $ unescape moduleId
-  JSMethodCall function _ arguments _ _ ->
-       jsExpressionDependencies function
+  JSMethodCall function _ arguments _ _
+    | isCommonJsRequire function
+    , JSLOne (JSStringLiteral _ moduleId) <- arguments
+    -> dependency $ unescape moduleId
+    | otherwise
+    -> jsExpressionDependencies function
     <> foldMapJSCommaList jsExpressionDependencies arguments
   JSReturn _ optionalExpression _ ->
     foldMap jsExpressionDependencies optionalExpression
@@ -215,10 +225,12 @@ jsExpressionDependencies = \case
   JSAssignExpression assignee _ assigned ->
        jsExpressionDependencies assignee
     <> jsExpressionDependencies assigned
-  JSCallExpression (JSIdentifier _ "require") _ (JSLOne (JSStringLiteral _ moduleId)) _ ->
-    dependency $ unescape moduleId
-  JSCallExpression function _ arguments _ ->
-       jsExpressionDependencies function
+  JSCallExpression function _ arguments _
+    | isCommonJsRequire function
+    , JSLOne (JSStringLiteral _ moduleId) <- arguments
+    -> dependency $ unescape moduleId
+    | otherwise
+    -> jsExpressionDependencies function
     <> foldMapJSCommaList jsExpressionDependencies arguments
   JSCallExpressionDot receiver _ property ->
        jsExpressionDependencies receiver
@@ -260,10 +272,12 @@ jsExpressionDependencies = \case
   JSMemberDot receiver _ property ->
        jsExpressionDependencies receiver
     <> jsExpressionDependencies property
-  JSMemberExpression (JSIdentifier _ "require") _ (JSLOne (JSStringLiteral _ moduleId)) _ ->
-    dependency $ unescape moduleId
-  JSMemberExpression function _ arguments _ ->
-       jsExpressionDependencies function
+  JSMemberExpression function _ arguments _
+    | isCommonJsRequire function
+    , JSLOne (JSStringLiteral _ moduleId) <- arguments
+    -> dependency $ unescape moduleId
+    | otherwise
+    -> jsExpressionDependencies function
     <> foldMapJSCommaList jsExpressionDependencies arguments
   JSMemberNew _ constructor _ arguments _ ->
        jsExpressionDependencies constructor
