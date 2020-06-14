@@ -25,7 +25,9 @@ dependency moduleId
 -- Paths, relative and absolute, are valid module identifiers.
   | not . Turtle.absolute $ Turtle.decodeString moduleId
   , not $  "." `List.isPrefixOf` moduleId
-  = Set.singleton $ Text.pack moduleId
+-- Packages names can be followed by a subpath.
+  , (name, _) <- List.break (== '/') moduleId
+  = Set.singleton $ Text.pack name
   | otherwise
   = mempty
 
