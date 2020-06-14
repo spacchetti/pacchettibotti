@@ -181,11 +181,55 @@ nativeDependencies root NpmPackageJson{..} = do
   where
     globUsedDependencies pattern = liftIO $ do
       sources <- Glob.globDir1 (Glob.compile pattern) root
-      mconcat <$> traverse (fmap jsAstDependencies . JavaScript.parseFileUtf8) sources
+      dependencies <- mconcat <$> traverse (fmap jsAstDependencies . JavaScript.parseFileUtf8) sources
+      pure $ Set.difference dependencies builtinNodeJsModules
     partitionUsedDependencies dependencies = foldMap $ \k ->
       case Map.lookup k dependencies of
         Nothing -> (Set.singleton k, mempty)
         Just v -> (mempty, Map.singleton k v)
+    builtinNodeJsModules =
+      [ "assert"
+      , "async_hooks"
+      , "buffer"
+      , "child_process"
+      , "cluster"
+      , "console"
+      , "constants"
+      , "crypto"
+      , "dgram"
+      , "dns"
+      , "domain"
+      , "events"
+      , "fs"
+      , "http"
+      , "http2"
+      , "https"
+      , "inspector"
+      , "module"
+      , "net"
+      , "os"
+      , "path"
+      , "perf_hooks"
+      , "process"
+      , "punycode"
+      , "querystring"
+      , "readline"
+      , "repl"
+      , "stream"
+      , "string_decoder"
+      , "sys"
+      , "timers"
+      , "tls"
+      , "trace_events"
+      , "tty"
+      , "url"
+      , "util"
+      , "v8"
+      , "vm"
+      , "wasi"
+      , "worker_threads"
+      , "zlib"
+      ]
 
 
 toDhallSource :: PackageMeta -> NpmDependencies -> NpmDevDependencies -> Text -> Text
