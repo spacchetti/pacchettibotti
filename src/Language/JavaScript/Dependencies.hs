@@ -26,8 +26,12 @@ dependency moduleId
   | not . Turtle.absolute $ Turtle.decodeString moduleId
   , not $  "." `List.isPrefixOf` moduleId
 -- Packages names can be followed by a subpath.
-  , (name, _) <- List.break (== '/') moduleId
-  = Set.singleton $ Text.pack name
+  = foldMap Set.singleton $ case Text.split (== '/') $ Text.pack moduleId of
+      scope : name : _
+        | "@" `Text.isPrefixOf` scope
+        -> Just $ scope <> "/" <> name
+      name : _ -> Just name
+      _ -> Nothing
   | otherwise
   = mempty
 
