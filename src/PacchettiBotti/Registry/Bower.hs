@@ -3,20 +3,33 @@ module PacchettiBotti.Registry.Bower where
 
 import PacchettiBotti.Prelude
 
+import qualified Control.Concurrent.Async as Async
 import qualified Data.Aeson as Json
+import qualified Data.Conduit.Combinators as Conduit
+import qualified Data.Conduit.Tar as Tar
+import qualified Data.Conduit.Zlib as Compression (ungzip)
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
-import qualified Network.HTTP.Simple as Http
+import qualified Language.JavaScript.Parser as JavaScript
+import qualified Network.HTTP.Client as Http
+import qualified Network.HTTP.Client.TLS as Http (getGlobalManager)
+import qualified Network.HTTP.Conduit as Http
 import qualified RIO.Time as Time
 import qualified Spago.Dhall as Dhall
+import qualified System.FilePath.Glob as Glob
 import qualified Text.Megaparsec as Parse
 import qualified Turtle
 import qualified UnliftIO.Directory as Directory
 import qualified Web.Bower.PackageMeta as Bower
 
-import           Web.Bower.PackageMeta      (PackageMeta (..))
+import           Control.Monad.IO.Class (liftIO)
+import           Data.Aeson (FromJSON(..), (.!=), (.:!))
+import           Data.Conduit (runConduit, (.|))
+import           Language.JavaScript.Dependencies (jsAstDependencies)
+import           System.IO.Error (isDoesNotExistError)
+import           Web.Bower.PackageMeta (PackageMeta (..))
 
 import qualified PacchettiBotti.DB as DB
 import qualified PacchettiBotti.GitHub as GitHub
@@ -25,6 +38,23 @@ import qualified PacchettiBotti.Static as Static
 
 
 type Expr = Dhall.DhallExpr Dhall.Import
+
+type NativeDependencies = Map Text Text
+
+newtype NpmDependencies = NpmDependencies { npmDependencies :: NativeDependencies }
+newtype NpmDevDependencies = NpmDevDependencies { npmDevDependencies :: NativeDependencies }
+
+data NpmPackageJson =
+  NpmPackageJson
+    { npmPackageJsonDependencies :: NativeDependencies
+    , npmPackageJsonDevDependencies :: NativeDependencies
+    }
+
+instance FromJSON NpmPackageJson where
+  parseJSON = Json.withObject "npm package.json" $ \package ->
+    NpmPackageJson
+      <$> package .:! "dependencies" .!= mempty
+      <*> package .:! "devDependencies" .!= mempty
 
 registryRepo :: GitHub.Address
 registryRepo = GitHub.Address "purescript" "registry"
@@ -79,25 +109,30 @@ writeMissingBowerManifests path = do
         let (DB.Address owner repo) = releaseAddress
         let (Tag tag) = releaseTag
         unless (Set.member (releaseAddress, releaseTag) toSkip) $ do
-          let url = "https://raw.githubusercontent.com/"
+          let releaseTarballUrl = "https://github.com/"
                 <> GitHub.untagName owner <> "/"
                 <> GitHub.untagName repo <> "/"
-                <> tag <> "/bower.json"
-          -- FIXME: download the package.json too?
-          -- See https://github.com/purescript/registry/issues/20
+                <> "archive/"
+                <> tag <> ".tar.gz"
           let packageInfo = displayShow releaseAddress <> "@" <> display tag
           let versionPath = packageDir <> "/" <> tag <> ".dhall"
-          result <- try $ do
+          result <- try . withSystemTempDirectory (Text.unpack $ GitHub.untagName repo <> "-" <> tag) $ \tmp -> do
             -- TODO: try to fetch the spago.dhall first and see if it conforms
             -- to the registry schema. Not right now, there's no package doing it
-            logInfo $ "Fetching Bower info for " <> packageInfo
-            req <- Http.parseRequest $ Text.unpack url
-            packageMeta <- Http.getResponseBody <$> Http.httpJSON req
-            logDebug "Checking self-contained dependencies"
+            logInfo $ "Fetching release tarball for " <> packageInfo
+            req <- Http.parseRequest $ Text.unpack releaseTarballUrl
+            res <- Http.responseBody <$> (Http.http req =<< liftIO Http.getGlobalManager)
+            runConduit $ res .| Compression.ungzip .| Tar.untar (Tar.restoreFileInto tmp) .| Conduit.mapM_ liftIO
+            packageMeta <- either error pure <=< liftIO $ Json.eitherDecodeFileStrict' "bower.json"
+            logDebug "Checking self-contained Bower dependencies"
             unlessM (selfContainedDependencies packageMeta) $
-              error "Dependencies not self-contained on purescript packages!"
+              error "Bower dependencies not self-contained on PureScript packages!"
+            logInfo $ "Parsing foreign modules for JavaScript dependencies"
+            npmPackageJson <- either error pure <=< liftIO $ Json.eitherDecodeFileStrict "package.json" `catch` \e ->
+              if isDoesNotExistError e then pure (Right $ NpmPackageJson mempty mempty) else throwIO e
+            (npmDependencies, npmDevDependencies) <- nativeDependencies tmp npmPackageJson
             logInfo $ "Writing package definition for " <> packageInfo
-            writeTextFile versionPath (toDhallSource packageMeta tag)
+            writeTextFile versionPath (toDhallSource packageMeta npmDependencies npmDevDependencies tag)
             Dhall.format versionPath
 
           case result of
@@ -135,8 +170,72 @@ bowerPackages
     bowerPackagesMap = fromRight mempty $ Json.eitherDecodeStrict Static.bowerPackagesJson
 
 
-toDhallSource :: PackageMeta -> Text -> Text
-toDhallSource PackageMeta{..} version = Text.unlines
+nativeDependencies :: MonadIO m => String -> NpmPackageJson -> m (NpmDependencies, NpmDevDependencies)
+nativeDependencies root NpmPackageJson{..} = liftIO $ do
+  (usedDependencies, usedDevDependencies) <- Async.concurrently
+    (globUsedDependencies "src/**/*.js")
+    (globUsedDependencies "test/**/*.js")
+  let (unsavedNpmDependencies, npmDependencies) = partitionUsedDependencies npmPackageJsonDependencies usedDependencies
+      (unsavedNpmDevDependencies, npmDevDependencies) = partitionUsedDependencies npmPackageJsonDevDependencies usedDevDependencies
+  unless (null unsavedNpmDependencies && null (Set.difference unsavedNpmDevDependencies usedDependencies)) $ do
+    error "Npm dependencies not saved in package.json!"
+  pure $ (NpmDependencies{..}, NpmDevDependencies{..})
+  where
+    globUsedDependencies pattern = do
+      sources <- Glob.globDir1 (Glob.compile pattern) root
+      dependencies <- mconcat <$> Async.mapConcurrently (fmap jsAstDependencies . JavaScript.parseFileUtf8) sources
+      pure $ Set.difference dependencies builtinNodeJsModules
+    partitionUsedDependencies dependencies = foldMap $ \k ->
+      case Map.lookup k dependencies of
+        Nothing -> (Set.singleton k, mempty)
+        Just v -> (mempty, Map.singleton k v)
+    builtinNodeJsModules =
+      [ "assert"
+      , "async_hooks"
+      , "buffer"
+      , "child_process"
+      , "cluster"
+      , "console"
+      , "constants"
+      , "crypto"
+      , "dgram"
+      , "dns"
+      , "domain"
+      , "events"
+      , "fs"
+      , "http"
+      , "http2"
+      , "https"
+      , "inspector"
+      , "module"
+      , "net"
+      , "os"
+      , "path"
+      , "perf_hooks"
+      , "process"
+      , "punycode"
+      , "querystring"
+      , "readline"
+      , "repl"
+      , "stream"
+      , "string_decoder"
+      , "sys"
+      , "timers"
+      , "tls"
+      , "trace_events"
+      , "tty"
+      , "url"
+      , "util"
+      , "v8"
+      , "vm"
+      , "wasi"
+      , "worker_threads"
+      , "zlib"
+      ]
+
+
+toDhallSource :: PackageMeta -> NpmDependencies -> NpmDevDependencies -> Text -> Text
+toDhallSource PackageMeta{..} NpmDependencies{..} NpmDevDependencies{..} version = Text.unlines
   [ "let Registry = ../../v1/Registry.dhall"
   , "in  Registry.Package::{"
   , ", name = " <> (tshow . stripPurescriptPrefix . Bower.runPackageName) bowerName
@@ -150,21 +249,35 @@ toDhallSource PackageMeta{..} version = Text.unlines
           Nothing -> "Git { url = " <> tshow repositoryUrl <> ", version = " <> version <> " })"
           Just (owner, repo)
             -> "GitHub { owner = " <> tshow owner <> ", repo = " <> tshow repo <> ", version = " <> tshow version <> " })"
-  , ", targets = toMap { "
-  , if List.null bowerDependencies
-    then ", src = Registry.Target::{ sources = [ \"src/**/*.purs\" ], dependencies = [] : Registry.Dependencies }"
-    else ", src = Registry.Target::{ sources = [ \"src/**/*.purs\" ], dependencies = toMap { " <> Text.intercalate ", " (mkDep <$> bowerDependencies) <> " }}"
-  , if List.null bowerDevDependencies
-    then ""
-    else ", test = Registry.Target::{ sources = [ \"src/**/*.purs\", \"test/**/*.purs\" ], dependencies = toMap { " <> Text.intercalate ", " (mkDep <$> bowerDevDependencies) <> " }}"
-  , " }"
-  , " }"
+  , ", targets = toMap {"
+    , ", src = Registry.Target::{"
+      , "  sources = [ \"src/**/*.purs\" ] "
+      , ", dependencies = " <> mkDependenciesMap (mkBowerDep <$> bowerDependencies)
+      , ", nativeDependencies = " <> mkDependenciesMap (mkDep <$> Map.toList npmDependencies)
+    , "}"
+  , if List.null bowerDevDependencies && Map.null npmDevDependencies then "" else Text.unlines
+    [ ", test = Registry.Target::{"
+      , "  sources = [ \"src/**/*.purs\", \"test/**/*.purs\" ] "
+      , ", dependencies = " <> mkDependenciesMap (mkBowerDep <$> bowerDependencies <> bowerDevDependencies)
+      , ", nativeDependencies = " <> mkDependenciesMap (mkDep <$> Map.toList (npmDependencies <> npmDevDependencies))
+      , "}"
+    , "}"
+    ]
   ]
   where
+    mkBowerDep (packageName, versionRange) =
+      mkDep
+        ( stripPurescriptPrefix $ Bower.runPackageName packageName
+        , Bower.runVersionRange versionRange
+        )
     mkDep (packageName, versionRange)
-      = "`" <> stripPurescriptPrefix (Bower.runPackageName packageName)
+      = "`" <> packageName
       <> "` = "
-      <> tshow (Bower.runVersionRange versionRange)
+      <> tshow versionRange
+    mkDependenciesMap dependencies =
+      if List.null dependencies
+      then "[] : Registry.Dependencies"
+      else "toMap { " <> Text.intercalate ", " dependencies <> " }"
 
 
 parseRepo :: Text -> Maybe (Text, Text)

@@ -22,6 +22,7 @@ type HasEnv env =
   , HasType GitHub.Auth env
   , HasType DB.Handle env
   , HasType Bus env
+  , HasResourceMap env
   )
 
 data Env = Env
@@ -31,10 +32,14 @@ data Env = Env
   , envDB :: !DB.Handle
   -- | Main message bus. It is write-only so you should use `spawnThread` to read from it
   , envBus :: !Bus
+  , envResourceMap :: ResourceMap
   } deriving (Generic)
 
 instance HasLogFunc Env where
   logFuncL = lens envLogFunc (\x y -> x { envLogFunc = y })
+
+instance HasResourceMap Env where
+  resourceMapL = lens envResourceMap (\x y -> x { envResourceMap = y })
 
 data Message
   = HourlyUpdate
