@@ -70,6 +70,7 @@ library:
   dependencies:
   - aeson
   - aeson-pretty
+  - async
   - async-pool
   - base >= 4.7 && < 5
   - bower-json

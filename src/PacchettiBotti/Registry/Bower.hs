@@ -3,6 +3,7 @@ module PacchettiBotti.Registry.Bower where
 
 import PacchettiBotti.Prelude
 
+import qualified Control.Concurrent.Async as Async
 import qualified Data.Aeson as Json
 import qualified Data.Conduit.Combinators as Conduit
 import qualified Data.Conduit.Tar as Tar
@@ -170,18 +171,19 @@ bowerPackages
 
 
 nativeDependencies :: MonadIO m => String -> NpmPackageJson -> m (NpmDependencies, NpmDevDependencies)
-nativeDependencies root NpmPackageJson{..} = do
-  usedDependencies <- globUsedDependencies "src/**/*.js"
-  usedDevDependencies <- globUsedDependencies "test/**/*.js"
+nativeDependencies root NpmPackageJson{..} = liftIO $ do
+  (usedDependencies, usedDevDependencies) <- Async.concurrently
+    (globUsedDependencies "src/**/*.js")
+    (globUsedDependencies "test/**/*.js")
   let (unsavedNpmDependencies, npmDependencies) = partitionUsedDependencies npmPackageJsonDependencies usedDependencies
       (unsavedNpmDevDependencies, npmDevDependencies) = partitionUsedDependencies npmPackageJsonDevDependencies usedDevDependencies
   unless (null unsavedNpmDependencies && null (Set.difference unsavedNpmDevDependencies usedDependencies)) $ do
     error "Npm dependencies not saved in package.json!"
   pure $ (NpmDependencies{..}, NpmDevDependencies{..})
   where
-    globUsedDependencies pattern = liftIO $ do
+    globUsedDependencies pattern = do
       sources <- Glob.globDir1 (Glob.compile pattern) root
-      dependencies <- mconcat <$> traverse (fmap jsAstDependencies . JavaScript.parseFileUtf8) sources
+      dependencies <- mconcat <$> Async.mapConcurrently (fmap jsAstDependencies . JavaScript.parseFileUtf8) sources
       pure $ Set.difference dependencies builtinNodeJsModules
     partitionUsedDependencies dependencies = foldMap $ \k ->
       case Map.lookup k dependencies of
